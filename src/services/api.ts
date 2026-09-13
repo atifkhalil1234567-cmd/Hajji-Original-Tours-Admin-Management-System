@@ -1,36 +1,63 @@
 import { AdminUser, DatabaseStatus, DashboardStats, Package, Hotel, Customer, Lead, Booking, Payment, Invoice, VisaApplication, Flight, Transport, NotificationItem } from '../types';
 
 // API Configuration & Base URL Resolution
+
+/**
+ * Normalizes an API base URL:
+ * - Trims whitespace
+ * - Strips any trailing slashes so trailing '/' does not create duplicate slashes
+ * - Strips any trailing '/api' so concatenating with '/api/...' does not produce '/api/api/...'
+ */
+export function normalizeApiBaseUrl(url: string | undefined | null): string {
+  if (!url || typeof url !== 'string') return '';
+  let cleaned = url.trim().replace(/\/+$/, '');
+  if (cleaned.endsWith('/api')) {
+    cleaned = cleaned.slice(0, -4).replace(/\/+$/, '');
+  }
+  return cleaned;
+}
+
+/**
+ * Returns the exact string set in import.meta.env.VITE_API_BASE_URL (empty if not set)
+ */
+export function getRawViteApiBaseUrl(): string {
+  const envUrl = (import.meta as any).env?.VITE_API_BASE_URL;
+  return typeof envUrl === 'string' ? envUrl.trim() : '';
+}
+
+/**
+ * Returns the active API base URL.
+ * In production: Strictly uses import.meta.env.VITE_API_BASE_URL.
+ * Does NOT fall back to window.location.origin in production.
+ * Does NOT use hardcoded Vercel URLs or localhost URLs in production.
+ */
 export function getApiBaseUrl(): string {
-  // 1. Runtime override in localStorage (allows changing/testing API URL in UI without rebuild)
+  // 1. Runtime override in localStorage (allows interactive testing on diagnostic panel)
   if (typeof window !== 'undefined') {
     const custom = localStorage.getItem('hajji_custom_api_url');
     if (custom && custom.trim()) {
-      let c = custom.trim().replace(/\/+$/, '');
-      if (c.endsWith('/api')) c = c.slice(0, -4);
-      return c;
-    }
-    if ((window as any).__HAJJI_API_URL__) {
-      let c = String((window as any).__HAJJI_API_URL__).trim().replace(/\/+$/, '');
-      if (c.endsWith('/api')) c = c.slice(0, -4);
-      return c;
+      return normalizeApiBaseUrl(custom);
     }
   }
 
-  // 2. Vite environment variable: VITE_API_BASE_URL (standard) with fallback to VITE_API_URL
-  const envUrl = (import.meta as any).env?.VITE_API_BASE_URL || (import.meta as any).env?.VITE_API_URL;
+  // 2. Strict use of environment variable: VITE_API_BASE_URL
+  const envUrl = (import.meta as any).env?.VITE_API_BASE_URL;
   if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
-    let c = envUrl.trim().replace(/\/+$/, '');
-    if (c.endsWith('/api')) c = c.slice(0, -4);
-    return c;
+    return normalizeApiBaseUrl(envUrl);
   }
 
-  // 3. Fallback for self-contained / dev preview environment
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return window.location.origin.replace(/\/+$/, '');
+  // 3. In local Vite development server only (dev mode), allow same-origin proxy
+  if ((import.meta as any).env?.DEV && typeof window !== 'undefined' && window.location?.origin) {
+    return normalizeApiBaseUrl(window.location.origin);
   }
 
+  // In production: Strictly return empty string if VITE_API_BASE_URL is missing.
+  // NEVER fall back to window.location.origin or Vercel URL.
   return '';
+}
+
+export function isApiBaseUrlConfigured(): boolean {
+  return Boolean(getApiBaseUrl());
 }
 
 // Backward-compatible alias
@@ -38,16 +65,25 @@ export function getBaseUrl(): string {
   return getApiBaseUrl();
 }
 
+/**
+ * Constructs the full API endpoint URL:
+ * ${VITE_API_BASE_URL}/api/...
+ * Ensures single /api prefix and eliminates duplicate slashes.
+ */
 export function buildApiUrl(endpoint: string): string {
   const base = getApiBaseUrl();
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
-  // If the endpoint already starts with /api/, do not duplicate; otherwise prepend /api
+  // Ensure /api prefix without duplication
   const apiPath = cleanEndpoint.startsWith('/api/') || cleanEndpoint === '/api'
     ? cleanEndpoint
     : `/api${cleanEndpoint}`;
 
-  return base ? `${base}${apiPath}` : apiPath;
+  if (!base) {
+    return apiPath;
+  }
+
+  return `${base}${apiPath}`;
 }
 
 export function setCustomBaseUrl(url: string | null): void {
@@ -74,6 +110,24 @@ export interface ApiError extends Error {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const base = getApiBaseUrl();
+  const isDev = Boolean((import.meta as any).env?.DEV);
+
+  // In production, prevent making requests to relative Vercel paths if VITE_API_BASE_URL is not set
+  if (!base && !isDev) {
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    const apiPath = cleanEndpoint.startsWith('/api/') || cleanEndpoint === '/api'
+      ? cleanEndpoint
+      : `/api${cleanEndpoint}`;
+    const missingErr: ApiError = new Error(
+      'VITE_API_BASE_URL is not configured. Please add VITE_API_BASE_URL to your Vercel Project Settings (Environment Variables) pointing to your Hostinger Express backend (e.g. https://YOUR-HOSTINGER-BACKEND-DOMAIN) and redeploy.'
+    );
+    missingErr.status = 500;
+    missingErr.statusText = 'Configuration Missing';
+    missingErr.url = `\${VITE_API_BASE_URL}${apiPath}`;
+    throw missingErr;
+  }
+
   const url = buildApiUrl(endpoint);
 
   const headers: Record<string, string> = {
@@ -219,6 +273,9 @@ export const api = {
   // Config & Diagnostics
   getBaseUrl,
   getApiBaseUrl,
+  getRawViteApiBaseUrl,
+  normalizeApiBaseUrl,
+  isApiBaseUrlConfigured,
   buildApiUrl,
   setCustomBaseUrl,
   getHealth: () =>
