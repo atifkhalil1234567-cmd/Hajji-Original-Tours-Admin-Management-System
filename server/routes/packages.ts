@@ -82,29 +82,77 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
   }
 });
 
-// 3. Package Detail (with child tables: departures, prices, itineraries, inclusions, exclusions, services, hotels)
+// 3. Departures List & Create (Before /:id so /departures is never matched as an ID)
+router.get('/departures', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    const { package_id } = req.query;
+    let sql = `
+      SELECT pd.*, p.title as package_title, p.origin_city
+      FROM package_departures pd
+      JOIN packages p ON pd.package_id = p.id
+      WHERE p.deleted_at IS NULL
+    `;
+    const params: any[] = [];
+    if (package_id) {
+      sql += ` AND pd.package_id = ?`;
+      params.push(Number(package_id));
+    }
+    sql += ` ORDER BY pd.departure_date ASC`;
+    const departures = await dbQuery(sql, params);
+    res.json({ success: true, data: departures });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+router.post('/departures', authenticate, authorize('packages', 'manage'), async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { package_id, departure_title, departure_date, return_date, total_seats, status } = req.body;
+    if (!package_id) {
+      res.status(400).json({ success: false, message: 'package_id is required' });
+      return;
+    }
+    const result = await dbRun(
+      `INSERT INTO package_departures (package_id, departure_title, departure_date, return_date, total_seats, status)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [Number(package_id), departure_title, departure_date, return_date, total_seats || 50, status || 'available']
+    );
+
+    await logActivity(req.user!.id, 'packages', 'add_departure', result.insertId, `Added departure "${departure_title}" for pkg #${package_id}`, req);
+    res.json({ success: true, id: result.insertId, message: 'Departure created successfully' });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// 4. Package Detail (with child tables: departures, prices, itineraries, inclusions, exclusions, services, hotels)
 router.get('/:id', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const pkgId = req.params.id;
-    const pkgs = await dbQuery(`SELECT p.*, pc.name as category_name FROM packages p JOIN package_categories pc ON p.category_id = pc.id WHERE p.id = ? AND p.deleted_at IS NULL`, [pkgId]);
+    const isNum = !isNaN(Number(pkgId));
+    const pkgs = await dbQuery(
+      `SELECT p.*, pc.name as category_name FROM packages p JOIN package_categories pc ON p.category_id = pc.id WHERE ${isNum ? 'p.id = ?' : 'p.slug = ?'} AND p.deleted_at IS NULL`,
+      [pkgId]
+    );
     if (pkgs.length === 0) {
       res.status(404).json({ success: false, message: 'Package not found' });
       return;
     }
 
     const pkg = pkgs[0];
-    const departures = await dbQuery(`SELECT * FROM package_departures WHERE package_id = ? ORDER BY departure_date ASC`, [pkgId]);
-    const prices = await dbQuery(`SELECT * FROM package_prices WHERE package_id = ?`, [pkgId]);
-    const itineraries = await dbQuery(`SELECT * FROM package_itineraries WHERE package_id = ? ORDER BY day_number ASC`, [pkgId]);
-    const inclusions = await dbQuery(`SELECT * FROM package_inclusions WHERE package_id = ? ORDER BY display_order ASC`, [pkgId]);
-    const exclusions = await dbQuery(`SELECT * FROM package_exclusions WHERE package_id = ? ORDER BY display_order ASC`, [pkgId]);
-    const services = await dbQuery(`SELECT * FROM package_services WHERE package_id = ?`, [pkgId]);
+    const actualId = pkg.id;
+    const departures = await dbQuery(`SELECT * FROM package_departures WHERE package_id = ? ORDER BY departure_date ASC`, [actualId]);
+    const prices = await dbQuery(`SELECT * FROM package_prices WHERE package_id = ?`, [actualId]);
+    const itineraries = await dbQuery(`SELECT * FROM package_itineraries WHERE package_id = ? ORDER BY day_number ASC`, [actualId]);
+    const inclusions = await dbQuery(`SELECT * FROM package_inclusions WHERE package_id = ? ORDER BY display_order ASC`, [actualId]);
+    const exclusions = await dbQuery(`SELECT * FROM package_exclusions WHERE package_id = ? ORDER BY display_order ASC`, [actualId]);
+    const services = await dbQuery(`SELECT * FROM package_services WHERE package_id = ?`, [actualId]);
     const hotels = await dbQuery(
       `SELECT ph.*, h.name as hotel_name, h.city as hotel_city, h.star_rating
        FROM package_hotels ph
        JOIN hotels h ON ph.hotel_id = h.id
        WHERE ph.package_id = ?`,
-      [pkgId]
+      [actualId]
     );
 
     res.json({

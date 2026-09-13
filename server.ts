@@ -23,6 +23,20 @@ async function startServer() {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+  // CORS and Security Headers
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', (req.headers.origin as string) || '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Refreshed-Token');
+    res.header('Access-Control-Expose-Headers', 'X-Refreshed-Token');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+
   // Ensure uploads directory exists and is statically served
   const uploadsDir = path.join(process.cwd(), 'uploads');
   if (!fs.existsSync(uploadsDir)) {
@@ -62,8 +76,11 @@ async function startServer() {
   app.use('/api/admin', adminRoutes);
 
   // Return 404 JSON for non-existent API routes before SPA fallback
-  app.use('/api', (req, res) => {
-    res.status(404).json({ success: false, message: 'API route not found' });
+  app.all('/api', (req, res) => {
+    res.status(404).json({ success: false, message: `API endpoint "${req.originalUrl}" not found` });
+  });
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({ success: false, message: `API endpoint "${req.originalUrl}" not found` });
   });
 
   // Global Error Handler for friendly messages

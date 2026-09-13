@@ -33,21 +33,36 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
   }
 });
 
+// Facilities list (must be before /:id)
+router.get('/facilities', authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    const facilities = await dbQuery(`SELECT * FROM hotel_facilities ORDER BY id ASC`);
+    res.json({ success: true, data: facilities });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
 router.get('/:id', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const hotelId = req.params.id;
-    const hotels = await dbQuery(`SELECT * FROM hotels WHERE id = ?`, [hotelId]);
+    const isNum = !isNaN(Number(hotelId));
+    const hotels = await dbQuery(
+      isNum ? `SELECT * FROM hotels WHERE id = ?` : `SELECT * FROM hotels WHERE name = ?`,
+      [hotelId]
+    );
     if (hotels.length === 0) {
       res.status(404).json({ success: false, message: 'Hotel not found' });
       return;
     }
 
-    const rooms = await dbQuery(`SELECT * FROM hotel_rooms WHERE hotel_id = ?`, [hotelId]);
+    const actualId = hotels[0].id;
+    const rooms = await dbQuery(`SELECT * FROM hotel_rooms WHERE hotel_id = ?`, [actualId]);
     const facilities = await dbQuery(
       `SELECT hf.* FROM hotel_facility_relations hfr
        JOIN hotel_facilities hf ON hfr.facility_id = hf.id
        WHERE hfr.hotel_id = ?`,
-      [hotelId]
+      [actualId]
     );
 
     res.json({

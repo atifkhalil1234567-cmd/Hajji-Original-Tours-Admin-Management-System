@@ -1,0 +1,28 @@
+# Hostinger LiteSpeed / Apache Web Server Configuration
+# Hajji Original Tours Admin Management System
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # 1. Do not rewrite existing static files, directories, uploads, or assets
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # 2. If Hostinger Apache is acting as reverse proxy for Node.js backend:
+  # (Uncomment the line below if Node runs on internal port and Apache serves the frontend)
+  # RewriteRule ^api/(.*)$ http://127.0.0.1:3000/api/$1 [P,L]
+
+  # 3. Single Page Application (SPA) route fallback - all page reloads route to index.html
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+<IfModule mod_headers.c>
+  # Prevent MIME type sniffing
+  Header set X-Content-Type-Options "nosniff"
+  # Clickjacking protection
+  Header set X-Frame-Options "SAMEORIGIN"
+  # Referrer policy
+  Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>

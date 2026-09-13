@@ -10,11 +10,14 @@ export interface DbStatus {
   host: string;
   tablesCount: number;
   message: string;
+  lastError?: string | null;
+  isConfiguredForMySQL?: boolean;
 }
 
 let mysqlPool: mysql.Pool | null = null;
 let sqliteDb: SqlJsDatabase | null = null;
 let isUsingMySQL = false;
+let lastMySQLConnectionError: string | null = null;
 const sqliteFilePath = path.join(process.cwd(), 'data_store.sqlite');
 
 export async function initDatabase(): Promise<DbStatus> {
@@ -24,7 +27,7 @@ export async function initDatabase(): Promise<DbStatus> {
   const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || 'hajji_original_tours';
   const port = parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || '3306', 10);
 
-  // Attempt MySQL connection if database credentials or custom host are provided
+  // Attempt MySQL connection if database credentials, custom user, database name, or host are configured
   const hasMySQLConfig = Boolean(
     process.env.DB_PASSWORD ||
     process.env.MYSQL_PASSWORD ||
@@ -35,6 +38,7 @@ export async function initDatabase(): Promise<DbStatus> {
 
   if (hasMySQLConfig) {
     try {
+      console.log(`[DB] Attempting MySQL connection to ${user}@${host}:${port}/${database}...`);
       const pool = mysql.createPool({
         host,
         user,
@@ -44,25 +48,38 @@ export async function initDatabase(): Promise<DbStatus> {
         waitForConnections: true,
         connectionLimit: 10,
         queueLimit: 0,
-        connectTimeout: 4000,
+        connectTimeout: 5000,
       });
 
       const [rows] = await pool.query('SELECT 1 as test');
       if (Array.isArray(rows)) {
         mysqlPool = pool;
         isUsingMySQL = true;
-        console.log(`[DB] Successfully connected to Hostinger MySQL at ${host}:${port}/${database}`);
+        lastMySQLConnectionError = null;
+
+        // Check tables in MySQL
+        let tablesCount = 0;
+        try {
+          const [tables] = await pool.query('SHOW TABLES') as any[];
+          tablesCount = Array.isArray(tables) ? tables.length : 0;
+        } catch (tErr) {
+          tablesCount = 38;
+        }
+
+        console.log(`[DB] Successfully connected to Hostinger MySQL at ${host}:${port}/${database} (${tablesCount} tables).`);
         return {
           connected: true,
           engine: 'mysql',
           database,
           host,
-          tablesCount: 38,
-          message: `Connected to Production MySQL (${host})`,
+          tablesCount,
+          message: `Connected to Production MySQL (${host}:${port}/${database})`,
+          isConfiguredForMySQL: true,
         };
       }
     } catch (err: any) {
-      console.warn(`[DB] MySQL connection to ${host}:${port}/${database} failed (${err.message}). Activating internal SQL engine with exact schema.`);
+      lastMySQLConnectionError = err.message || 'MySQL connection error';
+      console.warn(`[DB] MySQL connection to ${host}:${port}/${database} failed: ${lastMySQLConnectionError}. Activating internal relational SQL engine.`);
     }
   }
 
@@ -102,9 +119,29 @@ export async function initDatabase(): Promise<DbStatus> {
       sqliteDb.run("UPDATE payments SET currency = 'USD' WHERE currency = 'GBP' OR currency IS NULL;");
       sqliteDb.run("UPDATE expenses SET currency = 'USD' WHERE currency = 'GBP' OR currency IS NULL;");
       sqliteDb.run("UPDATE system_settings SET setting_value = 'USD' WHERE setting_key = 'default_currency';");
+
+      // Seed hotel facilities if empty
+      const facCheck = sqliteDb.exec("SELECT COUNT(*) as c FROM hotel_facilities;");
+      const facCount = facCheck[0]?.values[0]?.[0] || 0;
+      if (facCount === 0) {
+        const defaultFacilities = [
+          ['Haram View Rooms', 'eye'],
+          ['Complimentary High-Speed Wi-Fi', 'wifi'],
+          ['24/7 Room Service & Dining', 'utensils'],
+          ['Free Shuttle Service to Haram', 'bus'],
+          ['Buffet Breakfast Included', 'coffee'],
+          ['Wheelchair Accessible', 'accessibility'],
+          ['Luggage Assistance & Concierge', 'briefcase'],
+          ['Daily Housekeeping & Laundry', 'sparkles'],
+        ];
+        for (const [name, icon] of defaultFacilities) {
+          sqliteDb.run("INSERT OR IGNORE INTO hotel_facilities (name, icon) VALUES (?, ?);", [name, icon]);
+        }
+      }
+
       saveSqliteToFile();
     } catch (migErr) {
-      console.warn('[DB] Currency migration notice:', migErr);
+      console.warn('[DB] Currency / seed migration notice:', migErr);
     }
 
     isUsingMySQL = false;
@@ -248,12 +285,37 @@ export async function dbRun(sql: string, params: any[] = []): Promise<{ insertId
 export async function getDbStatus(): Promise<DbStatus> {
   const host = process.env.DB_HOST || process.env.MYSQL_HOST || 'localhost';
   const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || 'hajji_original_tours';
+  const port = process.env.DB_PORT || process.env.MYSQL_PORT || '3306';
+  const hasMySQLConfig = Boolean(
+    process.env.DB_PASSWORD ||
+    process.env.MYSQL_PASSWORD ||
+    (process.env.DB_USER && process.env.DB_USER !== 'root') ||
+    (process.env.DB_NAME && process.env.DB_NAME !== 'hajji_original_tours') ||
+    (process.env.DB_HOST && process.env.DB_HOST !== 'localhost' && process.env.DB_HOST !== '127.0.0.1')
+  );
+
+  let tablesCount = 38;
+  if (isUsingMySQL && mysqlPool) {
+    try {
+      const [tables] = await mysqlPool.query('SHOW TABLES') as any[];
+      tablesCount = Array.isArray(tables) ? tables.length : 38;
+    } catch {
+      tablesCount = 38;
+    }
+  }
+
   return {
     connected: true,
     engine: isUsingMySQL ? 'mysql' : 'sqlite_fallback',
     database,
-    host: isUsingMySQL ? host : 'Local Container Relational SQL Engine (InnoDB Compatible)',
-    tablesCount: 38,
-    message: isUsingMySQL ? `Connected to Hostinger MySQL at ${host}` : 'Active (Pre-populated from hajji_original_tours_database.sql)',
+    host: isUsingMySQL ? `${host}:${port}` : 'Local Container Relational SQL Engine (InnoDB Compatible)',
+    tablesCount,
+    message: isUsingMySQL
+      ? `Connected to Production MySQL at ${host}:${port}/${database}`
+      : hasMySQLConfig && lastMySQLConnectionError
+      ? `Local fallback active (MySQL connection error: ${lastMySQLConnectionError})`
+      : 'Active (Pre-populated from hajji_original_tours_database.sql)',
+    lastError: lastMySQLConnectionError,
+    isConfiguredForMySQL: hasMySQLConfig,
   };
 }

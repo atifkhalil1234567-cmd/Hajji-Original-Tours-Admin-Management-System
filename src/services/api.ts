@@ -1,18 +1,59 @@
 import { AdminUser, DatabaseStatus, DashboardStats, Package, Hotel, Customer, Lead, Booking, Payment, Invoice, VisaApplication, Flight, Transport, NotificationItem } from '../types';
 
-const BASE_URL = '/api';
+// API Configuration
+export function getBaseUrl(): string {
+  // 1. Runtime override in localStorage (allows changing API URL on Hostinger without rebuild)
+  if (typeof window !== 'undefined') {
+    const custom = localStorage.getItem('hajji_custom_api_url');
+    if (custom && custom.trim()) {
+      return custom.trim().replace(/\/+$/, '');
+    }
+    if ((window as any).__HAJJI_API_URL__) {
+      return String((window as any).__HAJJI_API_URL__).trim().replace(/\/+$/, '');
+    }
+  }
+  // 2. Vite environment variable
+  const envUrl = (import.meta as any).env?.VITE_API_URL;
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
+    return envUrl.trim().replace(/\/+$/, '');
+  }
+  // 3. Default relative production path
+  return '/api';
+}
+
+export function setCustomBaseUrl(url: string | null): void {
+  if (typeof window !== 'undefined') {
+    if (url && url.trim()) {
+      localStorage.setItem('hajji_custom_api_url', url.trim());
+    } else {
+      localStorage.removeItem('hajji_custom_api_url');
+    }
+  }
+}
 
 function getAuthHeader(): Record<string, string> {
   const token = localStorage.getItem('hajji_auth_token');
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+export interface ApiError extends Error {
+  status?: number;
+  statusText?: string;
+  contentType?: string;
+  url?: string;
+  rawResponse?: string;
+}
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const url = `${BASE_URL}${endpoint}`;
-  const headers = {
+  const baseUrl = getBaseUrl();
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const url = `${baseUrl}${cleanEndpoint}`;
+
+  const headers: Record<string, string> = {
+    'Accept': 'application/json',
     'Content-Type': 'application/json',
     ...getAuthHeader(),
-    ...options.headers,
+    ...(options.headers as any),
   };
 
   // If body is FormData, delete Content-Type to let browser set boundary
@@ -20,7 +61,19 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     delete (headers as any)['Content-Type'];
   }
 
-  const response = await fetch(url, { ...options, headers });
+  let response: Response;
+  try {
+    response = await fetch(url, { ...options, headers });
+  } catch (netErr: any) {
+    const netMessage = netErr?.message || 'Network request failed';
+    const err: ApiError = new Error(
+      `Cannot connect to API server at "${url}". Please verify your server is running, CORS settings, or network status (${netMessage}).`
+    );
+    err.status = 0;
+    err.statusText = 'Network Error';
+    err.url = url;
+    throw err;
+  }
 
   // If server automatically refreshed our token, store the new token immediately
   const refreshedToken = response.headers.get('X-Refreshed-Token');
@@ -28,7 +81,55 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     localStorage.setItem('hajji_auth_token', refreshedToken);
   }
 
-  const data = await response.json().catch(() => ({ success: false, message: 'Invalid response from server' }));
+  // Read response as text first to inspect content type and handle HTML / crash pages gracefully
+  let responseText = '';
+  try {
+    responseText = await response.text();
+  } catch {
+    responseText = '';
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  let data: any = null;
+
+  if (contentType.includes('application/json') || responseText.trim().startsWith('{') || responseText.trim().startsWith('[')) {
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      data = null;
+    }
+  }
+
+  // If response is not valid JSON, generate a helpful diagnostic error instead of generic "Invalid response from server"
+  if (!data) {
+    const status = response.status;
+    const isHtml = contentType.includes('text/html') || responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html');
+    let message = '';
+
+    if (status === 404) {
+      message = `API endpoint not found (HTTP 404) at "${url}". Verify backend server routing and API URL configuration.`;
+    } else if (status === 502) {
+      message = `Bad Gateway (HTTP 502) at "${url}". The Hostinger Node.js backend application process is not running or crashed.`;
+    } else if (status === 503) {
+      message = `Service Unavailable (HTTP 503) at "${url}". The Hostinger backend server is restarting or overloaded.`;
+    } else if (status === 500) {
+      message = `Internal Server Error (HTTP 500) at "${url}". The backend encountered an unhandled exception.`;
+    } else if (status === 403) {
+      message = `Access Forbidden (HTTP 403) at "${url}". Web server security rule blocked this API request.`;
+    } else if (isHtml) {
+      message = `Server returned HTML (status ${status}) instead of API JSON from "${url}". If hosted on Hostinger, ensure the Node.js application is running and reverse-proxying /api.`;
+    } else {
+      message = `HTTP ${status} ${response.statusText || 'Error'}: Unexpected server response format (${contentType || 'non-JSON'}).`;
+    }
+
+    const error: ApiError = new Error(message);
+    error.status = status;
+    error.statusText = response.statusText;
+    error.contentType = contentType;
+    error.rawResponse = responseText.slice(0, 300);
+    error.url = url;
+    throw error;
+  }
 
   if (response.status === 401) {
     localStorage.removeItem('hajji_auth_token');
@@ -38,8 +139,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 
   if (!response.ok || data.success === false) {
-    const error: any = new Error(data.message || `Request failed with status ${response.status}`);
+    const error: ApiError = new Error(data.message || `Request failed with status ${response.status}`);
     error.status = response.status;
+    error.statusText = response.statusText;
+    error.contentType = contentType;
+    error.url = url;
     throw error;
   }
 
@@ -47,6 +151,35 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 }
 
 export const api = {
+  // Config & Diagnostics
+  getBaseUrl,
+  setCustomBaseUrl,
+  getDiagnostic: () =>
+    request<{
+      success: boolean;
+      timestamp: string;
+      apiUrl: string;
+      database: {
+        connected: boolean;
+        engine: string;
+        host: string;
+        databaseName: string;
+        tablesCount: number;
+        lastError?: string | null;
+        adminsTableExists: boolean;
+        adminCount: number;
+        superadminFound: boolean;
+        superadminActive: boolean;
+        superadminEmail?: string | null;
+        queryError?: string | null;
+      };
+      environment: {
+        nodeEnv: string;
+        port: number | string;
+        corsEnabled: boolean;
+      };
+    }>('/auth/diagnostic'),
+
   // Auth
   login: (credentials: { username: string; password: string }) =>
     request<{ success: boolean; token: string; user: AdminUser; message: string }>('/auth/login', {

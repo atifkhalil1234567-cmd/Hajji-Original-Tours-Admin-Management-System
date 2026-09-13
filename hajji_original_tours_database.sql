@@ -942,6 +942,24 @@ INSERT INTO `hotel_rooms` (`id`, `hotel_id`, `room_name`, `room_type`, `view_typ
 (3, 2, 'Superior Haram View Twin', 'double', 'haram_view', 2),
 (4, 3, 'Classic City View Triple', 'triple', 'city_view', 3);
 
+-- Seed Hotel Facilities
+INSERT INTO `hotel_facilities` (`id`, `name`, `icon`) VALUES
+(1, 'Haram View Rooms', 'eye'),
+(2, 'Complimentary High-Speed Wi-Fi', 'wifi'),
+(3, '24/7 Room Service & Dining', 'utensils'),
+(4, 'Free Shuttle Service to Haram', 'bus'),
+(5, 'Buffet Breakfast Included', 'coffee'),
+(6, 'Wheelchair Accessible', 'accessibility'),
+(7, 'Luggage Assistance & Concierge', 'briefcase'),
+(8, 'Daily Housekeeping & Laundry', 'sparkles');
+
+-- Seed Hotel Facility Relations
+INSERT INTO `hotel_facility_relations` (`hotel_id`, `facility_id`) VALUES
+(1, 1), (1, 2), (1, 3), (1, 5), (1, 7),
+(2, 1), (2, 2), (2, 3), (2, 5), (2, 7),
+(3, 1), (3, 2), (3, 3), (3, 5), (3, 7),
+(4, 1), (4, 2), (4, 3), (4, 5), (4, 7);
+
 -- Seed Customers
 INSERT INTO `customers` (`id`, `customer_code`, `first_name`, `last_name`, `email`, `phone`, `whatsapp`, `nationality`, `country_of_residence`, `vip_level`, `status`, `lead_source`) VALUES
 (1, 'CUST-2026-001', 'Mohammed', 'Al-Rahman', 'm.alrahman@example.co.uk', '+44 7700 900077', '+44 7700 900077', 'British', 'United Kingdom', 'Platinum', 'active', 'Referral'),
