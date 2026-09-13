@@ -17,8 +17,8 @@ import adminRoutes from './server/routes/admin';
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-  const HOST = process.env.HOST || '0.0.0.0';
+  const PORT = 3000;
+  const HOST = '0.0.0.0';
 
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));

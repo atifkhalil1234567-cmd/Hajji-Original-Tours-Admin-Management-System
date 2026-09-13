@@ -20,7 +20,7 @@
     "@vitejs/plugin-react": "^5.0.4",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.2.3",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.2",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.546.0",
@@ -39,5 +39,8 @@
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2"
+  },
+  "overrides": {
+    "esbuild": "^0.28.2"
   }
 }
