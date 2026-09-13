@@ -1,0 +1,6 @@
+{
+  "name": "Hajji Original Tours Admin Management System",
+  "description": "Enterprise Travel Management, Hajj & Umrah Packages, CRM, Bookings, Finance, Flights, Hotels, Visa, CMS and Audit Logs administration system.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
