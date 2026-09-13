@@ -151,7 +151,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   };
 
   const handleDownloadSQL = () => {
-    window.location.href = '/api/admin/download-sql';
+    window.location.href = api.buildApiUrl('/admin/download-sql');
   };
 
   return (

@@ -1,24 +1,53 @@
 import { AdminUser, DatabaseStatus, DashboardStats, Package, Hotel, Customer, Lead, Booking, Payment, Invoice, VisaApplication, Flight, Transport, NotificationItem } from '../types';
 
-// API Configuration
-export function getBaseUrl(): string {
-  // 1. Runtime override in localStorage (allows changing API URL on Hostinger without rebuild)
+// API Configuration & Base URL Resolution
+export function getApiBaseUrl(): string {
+  // 1. Runtime override in localStorage (allows changing/testing API URL in UI without rebuild)
   if (typeof window !== 'undefined') {
     const custom = localStorage.getItem('hajji_custom_api_url');
     if (custom && custom.trim()) {
-      return custom.trim().replace(/\/+$/, '');
+      let c = custom.trim().replace(/\/+$/, '');
+      if (c.endsWith('/api')) c = c.slice(0, -4);
+      return c;
     }
     if ((window as any).__HAJJI_API_URL__) {
-      return String((window as any).__HAJJI_API_URL__).trim().replace(/\/+$/, '');
+      let c = String((window as any).__HAJJI_API_URL__).trim().replace(/\/+$/, '');
+      if (c.endsWith('/api')) c = c.slice(0, -4);
+      return c;
     }
   }
-  // 2. Vite environment variable
-  const envUrl = (import.meta as any).env?.VITE_API_URL;
+
+  // 2. Vite environment variable: VITE_API_BASE_URL (standard) with fallback to VITE_API_URL
+  const envUrl = (import.meta as any).env?.VITE_API_BASE_URL || (import.meta as any).env?.VITE_API_URL;
   if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
-    return envUrl.trim().replace(/\/+$/, '');
+    let c = envUrl.trim().replace(/\/+$/, '');
+    if (c.endsWith('/api')) c = c.slice(0, -4);
+    return c;
   }
-  // 3. Default relative production path
-  return '/api';
+
+  // 3. Fallback for self-contained / dev preview environment
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin.replace(/\/+$/, '');
+  }
+
+  return '';
+}
+
+// Backward-compatible alias
+export function getBaseUrl(): string {
+  return getApiBaseUrl();
+}
+
+export function buildApiUrl(endpoint: string): string {
+  const base = getApiBaseUrl();
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+
+  // If the endpoint already starts with /api/, do not duplicate; otherwise prepend /api
+  const apiPath = cleanEndpoint.startsWith('/api/') || cleanEndpoint === '/api'
+    ? cleanEndpoint
+    : `/api${cleanEndpoint}`;
+
+  return base ? `${base}${apiPath}` : apiPath;
 }
 
 export function setCustomBaseUrl(url: string | null): void {
@@ -45,9 +74,7 @@ export interface ApiError extends Error {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const baseUrl = getBaseUrl();
-  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  const url = `${baseUrl}${cleanEndpoint}`;
+  const url = buildApiUrl(endpoint);
 
   const headers: Record<string, string> = {
     'Accept': 'application/json',
@@ -65,9 +92,13 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   try {
     response = await fetch(url, { ...options, headers });
   } catch (netErr: any) {
-    const netMessage = netErr?.message || 'Network request failed';
+    const netMessage = netErr?.message || 'Failed to fetch';
+    const isVercel = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
+    const vercelHint = isVercel
+      ? ' (Frontend is on Vercel: verify VITE_API_BASE_URL is set in Vercel Environment Variables to your Hostinger backend and redeploy)'
+      : '';
     const err: ApiError = new Error(
-      `Cannot connect to API server at "${url}". Please verify your server is running, CORS settings, or network status (${netMessage}).`
+      `Network Connection Error: The frontend cannot connect to the backend at "${url}". Please verify your backend server is running and CORS allows requests from this domain.${vercelHint}`
     );
     err.status = 0;
     err.statusText = 'Network Error';
@@ -100,28 +131,55 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     }
   }
 
-  // If response is not valid JSON, generate a helpful diagnostic error instead of generic "Invalid response from server"
-  if (!data) {
-    const status = response.status;
-    const isHtml = contentType.includes('text/html') || responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html');
-    let message = '';
+  const status = response.status;
+  const isHtml = contentType.includes('text/html') || responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html');
 
-    if (status === 404) {
-      message = `API endpoint not found (HTTP 404) at "${url}". Verify backend server routing and API URL configuration.`;
-    } else if (status === 502) {
+  // HTTP 401: Invalid username/password or expired session
+  if (status === 401) {
+    localStorage.removeItem('hajji_auth_token');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('hajji_auth_expired', { detail: data?.message }));
+    }
+    const message = data?.message || 'Invalid username or password. Please verify your admin credentials.';
+    const error: ApiError = new Error(message);
+    error.status = 401;
+    error.statusText = response.statusText;
+    error.contentType = contentType;
+    error.url = url;
+    throw error;
+  }
+
+  // HTTP 404: Endpoint unavailable or backend API URL incorrect
+  if (status === 404) {
+    const isVercel = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
+    const message = `Backend API URL is incorrect or the endpoint is unavailable (HTTP 404) at "${url}". ${
+      isVercel
+        ? 'Running on Vercel: ensure VITE_API_BASE_URL is set in Vercel Environment Variables to your Hostinger backend (e.g. https://YOUR-BACKEND-DOMAIN) and that the backend Express server is running.'
+        : 'Please verify VITE_API_BASE_URL and ensure your backend Express server is running.'
+    }`;
+    const error: ApiError = new Error(message);
+    error.status = 404;
+    error.statusText = response.statusText;
+    error.contentType = contentType;
+    error.rawResponse = responseText.slice(0, 300);
+    error.url = url;
+    throw error;
+  }
+
+  // HTTP 500 / 502 / 503 / 504: Backend / database error
+  if (status >= 500) {
+    let message = '';
+    if (status === 502) {
       message = `Bad Gateway (HTTP 502) at "${url}". The Hostinger Node.js backend application process is not running or crashed.`;
     } else if (status === 503) {
       message = `Service Unavailable (HTTP 503) at "${url}". The Hostinger backend server is restarting or overloaded.`;
-    } else if (status === 500) {
-      message = `Internal Server Error (HTTP 500) at "${url}". The backend encountered an unhandled exception.`;
-    } else if (status === 403) {
-      message = `Access Forbidden (HTTP 403) at "${url}". Web server security rule blocked this API request.`;
-    } else if (isHtml) {
-      message = `Server returned HTML (status ${status}) instead of API JSON from "${url}". If hosted on Hostinger, ensure the Node.js application is running and reverse-proxying /api.`;
+    } else if (status === 504) {
+      message = `Gateway Timeout (HTTP 504) at "${url}". The backend server took too long to respond.`;
     } else {
-      message = `HTTP ${status} ${response.statusText || 'Error'}: Unexpected server response format (${contentType || 'non-JSON'}).`;
+      message = data?.message
+        ? `Backend or database error (HTTP 500): ${data.message}`
+        : `Backend or database error (HTTP 500) at "${url}". Please verify Hostinger MySQL connection and server logs.`;
     }
-
     const error: ApiError = new Error(message);
     error.status = status;
     error.statusText = response.statusText;
@@ -131,15 +189,22 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     throw error;
   }
 
-  if (response.status === 401) {
-    localStorage.removeItem('hajji_auth_token');
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('hajji_auth_expired', { detail: data.message }));
-    }
+  // If response was not valid JSON and not OK
+  if (!data && !response.ok) {
+    const message = isHtml
+      ? `Unexpected server response: Server returned HTML (status ${status}) instead of API JSON from "${url}". If hosted on Hostinger, ensure the Node.js application is running and accessible.`
+      : `HTTP ${status} ${response.statusText || 'Error'}: Unexpected server response format from "${url}".`;
+    const error: ApiError = new Error(message);
+    error.status = status;
+    error.statusText = response.statusText;
+    error.contentType = contentType;
+    error.rawResponse = responseText.slice(0, 300);
+    error.url = url;
+    throw error;
   }
 
-  if (!response.ok || data.success === false) {
-    const error: ApiError = new Error(data.message || `Request failed with status ${response.status}`);
+  if (!response.ok || data?.success === false) {
+    const error: ApiError = new Error(data?.message || `Request failed with status ${response.status}`);
     error.status = response.status;
     error.statusText = response.statusText;
     error.contentType = contentType;
@@ -153,7 +218,17 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 export const api = {
   // Config & Diagnostics
   getBaseUrl,
+  getApiBaseUrl,
+  buildApiUrl,
   setCustomBaseUrl,
+  getHealth: () =>
+    request<{
+      status: string;
+      timestamp: string;
+      database: DatabaseStatus;
+      app: string;
+      version: string;
+    }>('/api/health'),
   getDiagnostic: () =>
     request<{
       success: boolean;

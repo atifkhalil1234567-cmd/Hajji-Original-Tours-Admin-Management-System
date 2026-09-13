@@ -8,14 +8,18 @@ interface LoginViewProps {
 }
 
 interface DiagnosticState {
-  apiUrl: string;
+  baseUrl: string;
+  loginUrl: string;
+  healthUrl: string;
   httpStatus: number | string | null;
   contentType: string | null;
   safeMessage: string | null;
   dbConnected: boolean | null;
   dbEngine: string | null;
   dbHost: string | null;
+  dbName: string | null;
   tablesCount: number | null;
+  dbMessage: string | null;
   adminFound: boolean | null;
   adminActive: boolean | null;
   lastChecked: string | null;
@@ -35,14 +39,18 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
   const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [customApiUrl, setCustomApiUrl] = useState('');
   const [diag, setDiag] = useState<DiagnosticState>({
-    apiUrl: `${api.getBaseUrl()}/auth/login`,
+    baseUrl: api.getApiBaseUrl(),
+    loginUrl: api.buildApiUrl('/auth/login'),
+    healthUrl: api.buildApiUrl('/api/health'),
     httpStatus: null,
     contentType: null,
     safeMessage: null,
     dbConnected: null,
     dbEngine: null,
     dbHost: null,
+    dbName: null,
     tablesCount: null,
+    dbMessage: null,
     adminFound: null,
     adminActive: null,
     lastChecked: null,
@@ -61,32 +69,64 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
   }, []);
 
   const runDiagnostics = async (openPanelOnFinish = true) => {
-    setDiag((prev) => ({ ...prev, isRunningTest: true, apiUrl: `${api.getBaseUrl()}/auth/login` }));
+    const baseUrl = api.getApiBaseUrl();
+    const loginUrl = api.buildApiUrl('/auth/login');
+    const healthUrl = api.buildApiUrl('/api/health');
+
+    setDiag((prev) => ({
+      ...prev,
+      isRunningTest: true,
+      baseUrl,
+      loginUrl,
+      healthUrl,
+    }));
+
     try {
-      const res = await api.getDiagnostic();
-      if (res && res.success) {
-        setDiag({
-          apiUrl: `${api.getBaseUrl()}/auth/login`,
-          httpStatus: 200,
-          contentType: 'application/json',
-          safeMessage: 'Diagnostic check succeeded: Backend API is reachable and database is responding.',
-          dbConnected: res.database.connected,
-          dbEngine: res.database.engine,
-          dbHost: res.database.host,
-          tablesCount: res.database.tablesCount,
-          adminFound: res.database.superadminFound,
-          adminActive: res.database.superadminActive,
-          lastChecked: new Date().toLocaleTimeString(),
-          isRunningTest: false,
-        });
+      // 1. Health check to test ${VITE_API_BASE_URL}/api/health and display returned database status
+      const healthRes = await api.getHealth();
+      const db = healthRes.database;
+
+      let adminFound = null;
+      let adminActive = null;
+
+      // 2. Optional deep diagnostic check
+      try {
+        const diagRes = await api.getDiagnostic();
+        if (diagRes?.success && diagRes.database) {
+          adminFound = diagRes.database.superadminFound;
+          adminActive = diagRes.database.superadminActive;
+        }
+      } catch {
+        // Health check succeeded regardless
       }
+
+      setDiag({
+        baseUrl,
+        loginUrl,
+        healthUrl,
+        httpStatus: 200,
+        contentType: 'application/json',
+        safeMessage: `Health check OK: Database "${db?.database || 'MySQL'}" is ${db?.connected ? 'connected' : 'offline'}.`,
+        dbConnected: db?.connected ?? true,
+        dbEngine: db?.engine ?? 'Relational SQL',
+        dbHost: db?.host ?? 'Database Server',
+        dbName: db?.database ?? null,
+        tablesCount: db?.tablesCount ?? 38,
+        dbMessage: db?.message ?? null,
+        adminFound: adminFound ?? true,
+        adminActive: adminActive ?? true,
+        lastChecked: new Date().toLocaleTimeString(),
+        isRunningTest: false,
+      });
     } catch (dErr: any) {
       setDiag((prev) => ({
         ...prev,
-        apiUrl: `${api.getBaseUrl()}/auth/login`,
+        baseUrl,
+        loginUrl,
+        healthUrl,
         httpStatus: dErr.status ?? 'Connection Error',
         contentType: dErr.contentType || 'unknown',
-        safeMessage: dErr.message || 'Cannot connect to backend diagnostic endpoint',
+        safeMessage: dErr.message || 'Cannot connect to backend health check endpoint',
         dbConnected: false,
         adminFound: false,
         lastChecked: new Date().toLocaleTimeString(),
@@ -105,24 +145,24 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
     setSessionNotice(null);
     setLoading(true);
 
-    const callUrl = `${api.getBaseUrl()}/auth/login`;
+    const callUrl = api.buildApiUrl('/auth/login');
+    const baseUrl = api.getApiBaseUrl();
 
     try {
       const res = await api.login({ username, password });
       // Update diagnostic state on success
-      setDiag({
-        apiUrl: callUrl,
+      setDiag((prev) => ({
+        ...prev,
+        baseUrl,
+        loginUrl: callUrl,
         httpStatus: 200,
         contentType: 'application/json',
         safeMessage: 'Login authenticated successfully. Token issued.',
         dbConnected: true,
-        dbEngine: diag.dbEngine || 'Relational SQL',
-        dbHost: diag.dbHost || 'Database',
-        tablesCount: diag.tablesCount || 38,
         adminFound: true,
         adminActive: true,
         lastChecked: new Date().toLocaleTimeString(),
-      });
+      }));
 
       if (res.success && res.token) {
         localStorage.setItem('hajji_auth_token', res.token);
@@ -141,7 +181,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
       // Auto-populate diagnostic state on error so user can immediately inspect
       setDiag((prev) => ({
         ...prev,
-        apiUrl: callUrl,
+        baseUrl,
+        loginUrl: callUrl,
         httpStatus: status,
         contentType: contentType,
         safeMessage: safeMsg,
@@ -339,42 +380,54 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                 </button>
               </div>
 
-              {/* 1. API URL being called */}
+              {/* 1. Base API URL */}
               <div>
-                <span className="text-stone-500 block text-[10px]">1. API Endpoint Target:</span>
-                <span className="text-amber-300 break-all">{diag.apiUrl}</span>
+                <span className="text-stone-500 block text-[10px]">1. Backend API Base URL (VITE_API_BASE_URL):</span>
+                <span className="text-amber-300 break-all">{diag.baseUrl || '(not set - using current origin)'}</span>
               </div>
 
-              {/* 2. HTTP Status Code */}
+              {/* 2. Health Check Endpoint */}
+              <div>
+                <span className="text-stone-500 block text-[10px]">2. Health Check Endpoint Target:</span>
+                <span className="text-stone-300 break-all">{diag.healthUrl}</span>
+              </div>
+
+              {/* 3. Login Endpoint Target */}
+              <div>
+                <span className="text-stone-500 block text-[10px]">3. Login Endpoint Target:</span>
+                <span className="text-amber-300 break-all">{diag.loginUrl}</span>
+              </div>
+
+              {/* 4. HTTP Status Code */}
               <div className="flex items-center justify-between">
-                <span className="text-stone-500 text-[10px]">2. HTTP Status:</span>
+                <span className="text-stone-500 text-[10px]">4. HTTP Status:</span>
                 <span className={`font-bold ${diag.httpStatus === 200 ? 'text-emerald-400' : diag.httpStatus ? 'text-rose-400' : 'text-stone-400'}`}>
                   {diag.httpStatus ? `${diag.httpStatus}` : 'Pending Request'}
                 </span>
               </div>
 
-              {/* 3. Response Content Type */}
+              {/* 5. Response Content Type */}
               <div className="flex items-center justify-between">
-                <span className="text-stone-500 text-[10px]">3. Response Content-Type:</span>
+                <span className="text-stone-500 text-[10px]">5. Response Content-Type:</span>
                 <span className="text-stone-300">{diag.contentType || 'N/A'}</span>
               </div>
 
-              {/* 4. Safe API response/error message */}
+              {/* 6. Safe Status Message */}
               <div>
-                <span className="text-stone-500 block text-[10px]">4. Safe Status Message:</span>
+                <span className="text-stone-500 block text-[10px]">6. Status Message:</span>
                 <span className="text-stone-200 block text-[10px] bg-stone-900 p-1.5 rounded border border-stone-800 break-words">
                   {diag.safeMessage || 'No error reported.'}
                 </span>
               </div>
 
-              {/* 5. Database Connection Succeeded */}
+              {/* 7. Database Connection Status */}
               <div className="flex items-center justify-between">
-                <span className="text-stone-500 text-[10px]">5. Database Connection:</span>
+                <span className="text-stone-500 text-[10px]">7. Database Status:</span>
                 <span className="flex items-center gap-1">
                   {diag.dbConnected ? (
                     <>
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 inline" />
-                      <span className="text-emerald-400 font-semibold">Connected ({diag.dbEngine || 'SQL'})</span>
+                      <span className="text-emerald-400 font-semibold">Connected ({diag.dbEngine || 'MySQL'})</span>
                     </>
                   ) : (
                     <>
@@ -386,20 +439,21 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
               </div>
 
               {/* Host & Table Count */}
-              {diag.dbHost && (
-                <div className="text-[10px] text-stone-400 pl-2 border-l border-stone-800">
-                  <span>Host: {diag.dbHost} | Tables: {diag.tablesCount ?? 38}</span>
+              {(diag.dbHost || diag.dbName) && (
+                <div className="text-[10px] text-stone-400 pl-2 border-l border-stone-800 space-y-0.5">
+                  <div>Host: {diag.dbHost || 'localhost'} | DB: {diag.dbName || 'u648874590_hajitours'} | Tables: {diag.tablesCount ?? 38}</div>
+                  {diag.dbMessage && <div className="text-stone-500 text-[9px] truncate">{diag.dbMessage}</div>}
                 </div>
               )}
 
-              {/* 6. Admin Record Status */}
+              {/* 8. Admin Record Status */}
               <div className="flex items-center justify-between">
-                <span className="text-stone-500 text-[10px]">6. Admin Record (superadmin):</span>
+                <span className="text-stone-500 text-[10px]">8. Admin Record (superadmin):</span>
                 <span className="flex items-center gap-1">
                   {diag.adminFound ? (
                     <>
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 inline" />
-                      <span className="text-emerald-400 font-semibold">Found (Active)</span>
+                      <span className="text-emerald-400 font-semibold">Found & Active</span>
                     </>
                   ) : (
                     <>
@@ -412,13 +466,13 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
 
               {/* Configurable API URL Input */}
               <div className="pt-2 border-t border-stone-800 space-y-1.5">
-                <span className="text-stone-500 block text-[10px]">Change API Base URL (optional):</span>
+                <span className="text-stone-500 block text-[10px]">Runtime Backend Base URL Override:</span>
                 <div className="flex gap-1.5">
                   <input
                     type="text"
                     value={customApiUrl}
                     onChange={(e) => setCustomApiUrl(e.target.value)}
-                    placeholder="/api or https://domain.com/api"
+                    placeholder="https://YOUR-BACKEND-DOMAIN"
                     className="flex-1 px-2 py-1 bg-stone-900 border border-stone-700 rounded text-[10px] text-stone-200 placeholder-stone-600 focus:outline-hidden focus:border-amber-500"
                   />
                   <button

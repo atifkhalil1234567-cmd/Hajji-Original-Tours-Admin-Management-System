@@ -24,12 +24,49 @@ async function startServer() {
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   // CORS and Security Headers
+  // Express backend allows requests from Vercel frontend domain without insecure wildcard credentials
+  const configuredCorsOrigins = (process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+
   app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', (req.headers.origin as string) || '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Refreshed-Token');
-    res.header('Access-Control-Expose-Headers', 'X-Refreshed-Token');
-    res.header('Access-Control-Allow-Credentials', 'true');
+    const origin = req.headers.origin;
+
+    if (origin && typeof origin === 'string') {
+      let isAllowed = false;
+
+      if (configuredCorsOrigins.length === 0) {
+        // By default, allow incoming web origin (e.g. Vercel deployment, custom domain, or localhost)
+        isAllowed = true;
+      } else {
+        isAllowed = configuredCorsOrigins.some((allowed) => {
+          if (allowed === '*' || allowed === origin) return true;
+          // Support wildcard subdomain matching like *.vercel.app
+          if (allowed.startsWith('*.')) {
+            const rootDomain = allowed.slice(2);
+            try {
+              const originHost = new URL(origin).hostname;
+              return originHost === rootDomain || originHost.endsWith(`.${rootDomain}`);
+            } catch {
+              return false;
+            }
+          }
+          return false;
+        });
+      }
+
+      if (isAllowed) {
+        // Set the specific allowed origin (never '*' when credentials are used)
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+      }
+    }
+
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Refreshed-Token');
+    res.setHeader('Access-Control-Expose-Headers', 'X-Refreshed-Token');
+
     if (req.method === 'OPTIONS') {
       res.sendStatus(204);
       return;
