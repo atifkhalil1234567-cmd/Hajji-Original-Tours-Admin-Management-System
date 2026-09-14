@@ -17,7 +17,7 @@ import adminRoutes from './server/routes/admin';
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   const HOST = '0.0.0.0';
 
   app.use(express.json({ limit: '10mb' }));
@@ -42,9 +42,10 @@ async function startServer() {
       } else {
         isAllowed = configuredCorsOrigins.some((allowed) => {
           if (allowed === '*' || allowed === origin) return true;
-          // Support wildcard subdomain matching like *.vercel.app
-          if (allowed.startsWith('*.')) {
-            const rootDomain = allowed.slice(2);
+          // Support wildcard subdomain matching like *.vercel.app or https://*.vercel.app
+          const cleanAllowed = allowed.replace(/^https?:\/\//, '');
+          if (cleanAllowed.startsWith('*.')) {
+            const rootDomain = cleanAllowed.slice(2);
             try {
               const originHost = new URL(origin).hostname;
               return originHost === rootDomain || originHost.endsWith(`.${rootDomain}`);
@@ -130,14 +131,24 @@ async function startServer() {
   });
 
   // Vite middleware for development vs static serve for production
-  if (process.env.NODE_ENV !== 'production') {
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    Boolean(typeof __filename !== 'undefined' && __filename.includes('dist')) ||
+    Boolean(process.argv[1] && process.argv[1].includes('dist'));
+
+  if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'))
+      ? path.join(process.cwd(), 'dist')
+      : typeof __dirname !== 'undefined' && fs.existsSync(path.join(__dirname, 'index.html'))
+      ? __dirname
+      : path.join(process.cwd(), 'dist');
+
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
