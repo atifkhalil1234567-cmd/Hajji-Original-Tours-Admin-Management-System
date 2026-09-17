@@ -39,14 +39,13 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
   const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [customApiUrl, setCustomApiUrl] = useState('');
   const initialBase = api.getApiBaseUrl();
-  const initialRawVite = api.getRawViteApiBaseUrl();
   const [diag, setDiag] = useState<DiagnosticState>({
-    baseUrl: initialRawVite || initialBase,
-    loginUrl: initialBase ? `${initialBase}/api/auth/login` : '${VITE_API_BASE_URL}/api/auth/login',
-    healthUrl: initialBase ? `${initialBase}/api/health` : '${VITE_API_BASE_URL}/api/health',
+    baseUrl: initialBase,
+    loginUrl: api.buildApiUrl('/auth/login'),
+    healthUrl: api.buildApiUrl('/api/health'),
     httpStatus: null,
     contentType: null,
-    safeMessage: initialBase ? null : 'VITE_API_BASE_URL is not configured',
+    safeMessage: null,
     dbConnected: null,
     dbEngine: null,
     dbHost: null,
@@ -71,47 +70,20 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
   }, []);
 
   const runDiagnostics = async (openPanelOnFinish = true) => {
-    const rawVite = api.getRawViteApiBaseUrl();
     const activeBase = api.getApiBaseUrl();
-    const displayBase = rawVite || activeBase;
-    const loginUrl = activeBase ? `${activeBase}/api/auth/login` : '${VITE_API_BASE_URL}/api/auth/login';
-    const healthUrl = activeBase ? `${activeBase}/api/health` : '${VITE_API_BASE_URL}/api/health';
-
-    if (!activeBase) {
-      setDiag({
-        baseUrl: '',
-        loginUrl,
-        healthUrl,
-        httpStatus: 'Not Configured',
-        contentType: 'N/A',
-        safeMessage: 'VITE_API_BASE_URL is not configured. Please configure VITE_API_BASE_URL in your Vercel Project Settings (Environment Variables) to point to your Hostinger Express backend (e.g. https://YOUR-HOSTINGER-BACKEND-DOMAIN) and redeploy.',
-        dbConnected: false,
-        dbEngine: null,
-        dbHost: null,
-        dbName: null,
-        tablesCount: null,
-        dbMessage: 'Backend API base URL is not defined. No network request sent to Vercel.',
-        adminFound: false,
-        adminActive: false,
-        lastChecked: new Date().toLocaleTimeString(),
-        isRunningTest: false,
-      });
-      if (openPanelOnFinish) {
-        setShowDiagnostic(true);
-      }
-      return;
-    }
+    const loginUrl = api.buildApiUrl('/auth/login');
+    const healthUrl = api.buildApiUrl('/api/health');
 
     setDiag((prev) => ({
       ...prev,
       isRunningTest: true,
-      baseUrl: displayBase,
+      baseUrl: activeBase,
       loginUrl,
       healthUrl,
     }));
 
     try {
-      // 1. Health check to test ${VITE_API_BASE_URL}/api/health and display returned database status
+      // 1. Health check to test /api/health and display returned database status
       const healthRes = await api.getHealth();
       const db = healthRes.database;
 
@@ -130,7 +102,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
       }
 
       setDiag({
-        baseUrl: displayBase,
+        baseUrl: activeBase,
         loginUrl,
         healthUrl,
         httpStatus: 200,
@@ -150,7 +122,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
     } catch (dErr: any) {
       setDiag((prev) => ({
         ...prev,
-        baseUrl: displayBase,
+        baseUrl: activeBase,
         loginUrl,
         healthUrl,
         httpStatus: dErr.status ?? 'Connection Error',
@@ -175,31 +147,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
     setLoading(true);
 
     const activeBase = api.getApiBaseUrl();
-    const rawVite = api.getRawViteApiBaseUrl();
-    const displayBase = rawVite || activeBase;
-    const callUrl = activeBase ? `${activeBase}/api/auth/login` : '${VITE_API_BASE_URL}/api/auth/login';
-
-    if (!activeBase) {
-      const msg = 'VITE_API_BASE_URL is not configured. Please set VITE_API_BASE_URL in your Vercel Project Settings (Environment Variables) to your Hostinger backend URL and redeploy.';
-      setError(msg);
-      setDiag((prev) => ({
-        ...prev,
-        baseUrl: '',
-        loginUrl: callUrl,
-        httpStatus: 'Not Configured',
-        safeMessage: msg,
-      }));
-      setShowDiagnostic(true);
-      setLoading(false);
-      return;
-    }
+    const callUrl = api.buildApiUrl('/auth/login');
 
     try {
       const res = await api.login({ username, password });
       // Update diagnostic state on success
       setDiag((prev) => ({
         ...prev,
-        baseUrl: displayBase,
+        baseUrl: activeBase,
         loginUrl: callUrl,
         httpStatus: 200,
         contentType: 'application/json',
@@ -227,7 +182,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
       // Auto-populate diagnostic state on error so user can immediately inspect
       setDiag((prev) => ({
         ...prev,
-        baseUrl: displayBase,
+        baseUrl: activeBase,
         loginUrl: callUrl,
         httpStatus: status,
         contentType: contentType,
@@ -428,9 +383,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
 
               {/* 1. Base API URL */}
               <div>
-                <span className="text-stone-500 block text-[10px]">1. Backend API Base URL (VITE_API_BASE_URL):</span>
-                <span className={`break-all ${diag.baseUrl ? 'text-amber-300' : 'text-rose-400 font-semibold'}`}>
-                  {diag.baseUrl || 'VITE_API_BASE_URL is not configured'}
+                <span className="text-stone-500 block text-[10px]">1. Backend API Base URL:</span>
+                <span className="text-amber-300 break-all">
+                  {diag.baseUrl || (typeof window !== 'undefined' ? window.location.origin : 'Same-origin')}
                 </span>
               </div>
 

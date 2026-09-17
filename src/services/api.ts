@@ -27,9 +27,9 @@ export function getRawViteApiBaseUrl(): string {
 
 /**
  * Returns the active API base URL.
- * In production: Strictly uses import.meta.env.VITE_API_BASE_URL.
- * Does NOT fall back to window.location.origin in production.
- * Does NOT use hardcoded Vercel URLs or localhost URLs in production.
+ * 1. Runtime override in localStorage (allows interactive testing on diagnostic panel)
+ * 2. Optional override via environment variable: import.meta.env.VITE_API_BASE_URL
+ * 3. Fallback to same-origin (window.location.origin) when running in the browser
  */
 export function getApiBaseUrl(): string {
   // 1. Runtime override in localStorage (allows interactive testing on diagnostic panel)
@@ -40,19 +40,17 @@ export function getApiBaseUrl(): string {
     }
   }
 
-  // 2. Strict use of environment variable: VITE_API_BASE_URL
+  // 2. Optional environment variable override: VITE_API_BASE_URL
   const envUrl = (import.meta as any).env?.VITE_API_BASE_URL;
   if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
     return normalizeApiBaseUrl(envUrl);
   }
 
-  // 3. In local Vite development server only (dev mode), allow same-origin proxy
-  if ((import.meta as any).env?.DEV && typeof window !== 'undefined' && window.location?.origin) {
+  // 3. Fallback to same-origin in the browser (Hostinger unified frontend + Express backend)
+  if (typeof window !== 'undefined' && window.location?.origin) {
     return normalizeApiBaseUrl(window.location.origin);
   }
 
-  // In production: Strictly return empty string if VITE_API_BASE_URL is missing.
-  // NEVER fall back to window.location.origin or Vercel URL.
   return '';
 }
 
@@ -110,24 +108,6 @@ export interface ApiError extends Error {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const base = getApiBaseUrl();
-  const isDev = Boolean((import.meta as any).env?.DEV);
-
-  // In production, prevent making requests to relative Vercel paths if VITE_API_BASE_URL is not set
-  if (!base && !isDev) {
-    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-    const apiPath = cleanEndpoint.startsWith('/api/') || cleanEndpoint === '/api'
-      ? cleanEndpoint
-      : `/api${cleanEndpoint}`;
-    const missingErr: ApiError = new Error(
-      'VITE_API_BASE_URL is not configured. Please add VITE_API_BASE_URL to your Vercel Project Settings (Environment Variables) pointing to your Hostinger Express backend (e.g. https://YOUR-HOSTINGER-BACKEND-DOMAIN) and redeploy.'
-    );
-    missingErr.status = 500;
-    missingErr.statusText = 'Configuration Missing';
-    missingErr.url = `\${VITE_API_BASE_URL}${apiPath}`;
-    throw missingErr;
-  }
-
   const url = buildApiUrl(endpoint);
 
   const headers: Record<string, string> = {
@@ -146,13 +126,8 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   try {
     response = await fetch(url, { ...options, headers });
   } catch (netErr: any) {
-    const netMessage = netErr?.message || 'Failed to fetch';
-    const isVercel = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
-    const vercelHint = isVercel
-      ? ' (Frontend is on Vercel: verify VITE_API_BASE_URL is set in Vercel Environment Variables to your Hostinger backend and redeploy)'
-      : '';
     const err: ApiError = new Error(
-      `Network Connection Error: The frontend cannot connect to the backend at "${url}". Please verify your backend server is running and CORS allows requests from this domain.${vercelHint}`
+      `Network Connection Error: The frontend cannot connect to the backend at "${url}". Please verify your backend server is running and accessible.`
     );
     err.status = 0;
     err.statusText = 'Network Error';
@@ -205,12 +180,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   // HTTP 404: Endpoint unavailable or backend API URL incorrect
   if (status === 404) {
-    const isVercel = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
-    const message = `Backend API URL is incorrect or the endpoint is unavailable (HTTP 404) at "${url}". ${
-      isVercel
-        ? 'Running on Vercel: ensure VITE_API_BASE_URL is set in Vercel Environment Variables to your Hostinger backend (e.g. https://YOUR-BACKEND-DOMAIN) and that the backend Express server is running.'
-        : 'Please verify VITE_API_BASE_URL and ensure your backend Express server is running.'
-    }`;
+    const message = `Backend API endpoint is unavailable (HTTP 404) at "${url}". Please ensure your backend Express server is running and the route exists.`;
     const error: ApiError = new Error(message);
     error.status = 404;
     error.statusText = response.statusText;
