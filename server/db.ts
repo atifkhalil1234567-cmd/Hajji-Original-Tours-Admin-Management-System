@@ -319,3 +319,56 @@ export async function getDbStatus(): Promise<DbStatus> {
     isConfiguredForMySQL: hasMySQLConfig,
   };
 }
+
+export async function testMySQLQuery(): Promise<boolean> {
+  const host = process.env.DB_HOST || process.env.MYSQL_HOST || 'localhost';
+  const user = process.env.DB_USER || process.env.MYSQL_USER || 'root';
+  const password = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || '';
+  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || 'hajji_original_tours';
+  const port = parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || '3306', 10);
+
+  // 1. If mysqlPool is already active and using MySQL, test the query on the existing pool
+  if (isUsingMySQL && mysqlPool) {
+    try {
+      const [rows] = await mysqlPool.query('SELECT 1 AS connected');
+      if (Array.isArray(rows) && rows.length > 0) {
+        return true;
+      }
+    } catch (err: any) {
+      console.warn('[DB Test] Existing pool query failed, trying fresh connection:', err.message);
+    }
+  }
+
+  // 2. Attempt direct connection to MySQL
+  let conn: mysql.Connection | null = null;
+  try {
+    conn = await mysql.createConnection({
+      host,
+      user,
+      password,
+      database,
+      port,
+      connectTimeout: 5000,
+    });
+    const [rows] = await conn.query('SELECT 1 AS connected');
+    await conn.end();
+
+    if (Array.isArray(rows) && rows.length > 0) {
+      if (!isUsingMySQL) {
+        initDatabase().catch((initErr) => {
+          console.warn('[DB Test] Background pool init notice:', initErr.message);
+        });
+      }
+      return true;
+    }
+    return false;
+  } catch (err: any) {
+    console.warn('[DB Test] MySQL connection failed:', err.message);
+    if (conn) {
+      try {
+        await conn.end();
+      } catch {}
+    }
+    return false;
+  }
+}

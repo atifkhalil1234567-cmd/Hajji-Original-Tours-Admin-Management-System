@@ -3,7 +3,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
-import { initDatabase, getDbStatus } from './server/db';
+import { initDatabase, getDbStatus, testMySQLQuery } from './server/db';
 import authRoutes from './server/routes/auth';
 import dashboardRoutes from './server/routes/dashboard';
 import packageRoutes from './server/routes/packages';
@@ -100,6 +100,29 @@ async function startServer() {
       app: 'Hajji Original Tours Admin Management System',
       version: '1.0.0',
     });
+  });
+
+  // Temporary safe MySQL test endpoint for Hostinger deployment verification
+  app.get('/api/db-test', async (req, res) => {
+    try {
+      const isConnected = await testMySQLQuery();
+      if (isConnected) {
+        res.status(200).json({
+          success: true,
+          database: 'connected',
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          database: 'connection_failed',
+        });
+      }
+    } catch {
+      res.status(500).json({
+        success: false,
+        database: 'connection_failed',
+      });
+    }
   });
 
   app.use('/api/auth', authRoutes);
