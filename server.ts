@@ -2,7 +2,6 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { createServer as createViteServer } from 'vite';
 import { initDatabase, getDbStatus, testMySQLQuery } from './server/db';
 import authRoutes from './server/routes/auth';
 import dashboardRoutes from './server/routes/dashboard';
@@ -15,6 +14,15 @@ import travelRoutes from './server/routes/travel';
 import cmsRoutes from './server/routes/cms';
 import adminRoutes from './server/routes/admin';
 
+// Process-level safety guards to prevent unhandled errors from terminating Node
+process.on('unhandledRejection', (reason) => {
+  console.warn('[Server] Handled unhandled rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[Server] Handled uncaught exception:', err);
+});
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
@@ -24,7 +32,6 @@ async function startServer() {
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   // CORS and Security Headers
-  // Express backend allows requests from Vercel frontend domain without insecure wildcard credentials
   const configuredCorsOrigins = (process.env.CORS_ORIGIN || '')
     .split(',')
     .map((o) => o.trim())
@@ -75,20 +82,25 @@ async function startServer() {
     next();
   });
 
-  // Ensure uploads directory exists and is statically served
+  // Ensure uploads directory exists and is statically served (safely guarded)
   const uploadsDir = path.join(process.cwd(), 'uploads');
   if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
+    try {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    } catch (mkdirErr) {
+      console.warn('[Uploads Directory Notice]:', mkdirErr);
+    }
   }
   app.use('/uploads', express.static(uploadsDir));
 
-  // Initialize relational database (MySQL or embedded schema)
-  try {
-    const status = await initDatabase();
-    console.log(`[DB Engine] Status: ${status.message}`);
-  } catch (err) {
-    console.error('[DB Engine] Failed to initialize database:', err);
-  }
+  // Initialize relational database asynchronously so server binds to port immediately
+  initDatabase()
+    .then((status) => {
+      console.log(`[DB Engine] Status: ${status.message}`);
+    })
+    .catch((err) => {
+      console.warn('[DB Engine] Initial database notice:', err?.message || err);
+    });
 
   // API Routes
   app.get('/api/health', async (req, res) => {
@@ -153,34 +165,54 @@ async function startServer() {
     });
   });
 
-  // Vite middleware for development vs static serve for production
+  // Determine production vs dev environment safely
   const isProduction =
     process.env.NODE_ENV === 'production' ||
-    Boolean(typeof __filename !== 'undefined' && __filename.includes('dist')) ||
-    Boolean(process.argv[1] && process.argv[1].includes('dist'));
+    Boolean(typeof __filename !== 'undefined' && (__filename.endsWith('.cjs') || __filename.includes('dist'))) ||
+    Boolean(process.argv[1] && (process.argv[1].endsWith('.cjs') || process.argv[1].includes('dist'))) ||
+    fs.existsSync(path.join(process.cwd(), 'dist', 'index.html')) ||
+    (typeof __dirname !== 'undefined' && fs.existsSync(path.join(__dirname, 'index.html')));
 
   if (!isProduction) {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
+    try {
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } catch (viteError) {
+      console.warn('[Vite Dev Server Notice]:', viteError);
+    }
   } else {
-    const distPath = fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'))
-      ? path.join(process.cwd(), 'dist')
-      : typeof __dirname !== 'undefined' && fs.existsSync(path.join(__dirname, 'index.html'))
-      ? __dirname
-      : path.join(process.cwd(), 'dist');
+    const possibleDistPaths = [
+      path.join(process.cwd(), 'dist'),
+      typeof __dirname !== 'undefined' ? __dirname : '',
+      typeof __dirname !== 'undefined' ? path.join(__dirname, 'dist') : '',
+    ].filter(Boolean);
+
+    const distPath = possibleDistPaths.find((p) => fs.existsSync(path.join(p, 'index.html'))) || possibleDistPaths[0];
 
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(200).send('<!DOCTYPE html><html><head><title>Hajji Original Tours Admin</title></head><body><h1>Hajji Original Tours Admin</h1><p>System is online.</p></body></html>');
+      }
     });
   }
 
-  app.listen(PORT, HOST, () => {
+  const server = app.listen(PORT, HOST, () => {
     console.log(`[Hajji Original Tours Admin] Running on http://${HOST}:${PORT}`);
+  });
+
+  server.on('error', (err: any) => {
+    console.error('[HTTP Server Listen Error]:', err?.message || err);
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('[Fatal Server Startup Error]:', err);
+});

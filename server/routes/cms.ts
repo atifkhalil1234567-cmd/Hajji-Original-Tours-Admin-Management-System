@@ -10,7 +10,9 @@ const router = Router();
 // Setup Multer for upload storage
 const uploadDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+  try {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  } catch {}
 }
 
 const storage = multer.diskStorage({

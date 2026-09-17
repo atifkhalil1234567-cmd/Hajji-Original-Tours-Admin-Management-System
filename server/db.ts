@@ -154,8 +154,17 @@ export async function initDatabase(): Promise<DbStatus> {
       message: 'Running Local Relational SQL Database (Ready for Hostinger deployment)',
     };
   } catch (err: any) {
-    console.error('[DB] Critical error initializing SQL database:', err);
-    throw err;
+    console.warn('[DB] Relational database init notice:', err?.message || err);
+    return {
+      connected: false,
+      engine: 'sqlite_fallback',
+      database: database || 'hajji_original_tours',
+      host: host || 'localhost',
+      tablesCount: 0,
+      message: `Database initialization deferred: ${err?.message || 'Waiting for connection'}`,
+      lastError: err?.message || null,
+      isConfiguredForMySQL: hasMySQLConfig,
+    };
   }
 }
 
@@ -166,14 +175,20 @@ function saveSqliteToFile() {
     const buffer = Buffer.from(data);
     fs.writeFileSync(sqliteFilePath, buffer);
   } catch (e) {
-    console.error('[DB] Failed saving SQL file:', e);
+    console.warn('[DB] Failed saving SQL file to disk:', e);
   }
 }
 
 async function bootstrapSqliteFromSchema() {
   if (!sqliteDb) return;
-  const sqlFile = path.join(process.cwd(), 'hajji_original_tours_database.sql');
-  if (!fs.existsSync(sqlFile)) return;
+  const possibleSqlPaths = [
+    path.join(process.cwd(), 'hajji_original_tours_database.sql'),
+    typeof __dirname !== 'undefined' ? path.join(__dirname, '..', 'hajji_original_tours_database.sql') : '',
+    typeof __dirname !== 'undefined' ? path.join(__dirname, 'hajji_original_tours_database.sql') : '',
+  ].filter(Boolean);
+
+  const sqlFile = possibleSqlPaths.find((p) => fs.existsSync(p));
+  if (!sqlFile) return;
 
   let rawSql = fs.readFileSync(sqlFile, 'utf8');
 
