@@ -99,7 +99,7 @@ async function startServer() {
       console.log(`[DB Engine] Status: ${status.message}`);
     })
     .catch((err) => {
-      console.warn('[DB Engine] Initial database notice:', err?.message || err);
+      console.log('[DB Engine] Initial database notice:', err?.message || err);
     });
 
   // API Routes

@@ -20,7 +20,7 @@ export function normalizeApiBaseUrl(url: string | undefined | null): string {
 /**
  * Production backend API Base URL hosted on Hostinger
  */
-export const PRODUCTION_API_BASE_URL = 'https://myc.hajjioriginaltours.com';
+export const PRODUCTION_API_BASE_URL = 'https://api.hajjioriginaltours.com';
 
 /**
  * Returns the exact string set in import.meta.env.VITE_API_BASE_URL (empty if not set or stale Vercel URL)
@@ -42,7 +42,7 @@ export function getRawViteApiBaseUrl(): string {
  * 1. Runtime override in localStorage (allows interactive testing on diagnostic panel, purges stale vercel.app domains)
  * 2. Optional override via environment variable: import.meta.env.VITE_API_BASE_URL (excluding stale vercel.app)
  * 3. Fallback to same-origin ONLY if running directly on the production Hostinger domain (e.g. hajjioriginaltours.com)
- * 4. Production Hostinger backend base URL: https://myc.hajjioriginaltours.com
+ * 4. Production Hostinger backend base URL: https://api.hajjioriginaltours.com
  */
 export function getApiBaseUrl(): string {
   // 1. Runtime override in localStorage (allows interactive testing, purges any stale Vercel URL)

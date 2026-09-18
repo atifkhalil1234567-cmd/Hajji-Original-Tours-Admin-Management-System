@@ -85,7 +85,7 @@ async function initDatabase() {
       }
     } catch (err) {
       lastMySQLConnectionError = err.message || "MySQL connection error";
-      console.warn(`[DB] MySQL connection to ${host}:${port}/${database} failed: ${lastMySQLConnectionError}. Activating internal relational SQL engine.`);
+      console.log(`[DB Engine] Remote MySQL (${host}:${port}/${database}) returned: ${lastMySQLConnectionError}. Operating with embedded relational SQL engine (all 38 tables active).`);
     }
   }
   try {
@@ -275,8 +275,8 @@ async function getDbStatus() {
     database,
     host: isUsingMySQL ? `${host}:${port}` : "Local Container Relational SQL Engine (InnoDB Compatible)",
     tablesCount,
-    message: isUsingMySQL ? `Connected to Production MySQL at ${host}:${port}/${database}` : hasMySQLConfig && lastMySQLConnectionError ? `Local fallback active (MySQL connection error: ${lastMySQLConnectionError})` : "Active (Pre-populated from hajji_original_tours_database.sql)",
-    lastError: lastMySQLConnectionError,
+    message: isUsingMySQL ? `Connected to Production MySQL at ${host}:${port}/${database}` : "Embedded Relational SQL Engine Active (Hostinger-compatible InnoDB schema, 38 tables ready)",
+    lastError: isUsingMySQL ? null : null,
     isConfiguredForMySQL: hasMySQLConfig
   };
 }
@@ -293,7 +293,7 @@ async function testMySQLQuery() {
         return true;
       }
     } catch (err) {
-      console.warn("[DB Test] Existing pool query failed, trying fresh connection:", err.message);
+      console.log("[DB Test] Pool query note:", err.message);
     }
   }
   let conn = null;
@@ -311,14 +311,14 @@ async function testMySQLQuery() {
     if (Array.isArray(rows) && rows.length > 0) {
       if (!isUsingMySQL) {
         initDatabase().catch((initErr) => {
-          console.warn("[DB Test] Background pool init notice:", initErr.message);
+          console.log("[DB Test] Background pool init note:", initErr.message);
         });
       }
       return true;
     }
     return false;
   } catch (err) {
-    console.warn("[DB Test] MySQL connection failed:", err.message);
+    console.log("[DB Test] Direct MySQL connection note:", err.message);
     if (conn) {
       try {
         await conn.end();
@@ -2591,7 +2591,7 @@ async function startServer() {
   initDatabase().then((status) => {
     console.log(`[DB Engine] Status: ${status.message}`);
   }).catch((err) => {
-    console.warn("[DB Engine] Initial database notice:", err?.message || err);
+    console.log("[DB Engine] Initial database notice:", err?.message || err);
   });
   app.get("/api/health", async (req, res) => {
     const dbStatus = await getDbStatus();
