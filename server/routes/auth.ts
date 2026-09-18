@@ -69,7 +69,7 @@ router.get('/diagnostic', async (req: Request, res: Response) => {
 // 2. Main Login Endpoint
 router.post('/login', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { username, password } = req.body;
+    const { username, password } = req.body || {};
     const ip = req.ip || req.socket?.remoteAddress || '127.0.0.1';
     const ua = (req.headers['user-agent'] as string) || '';
 

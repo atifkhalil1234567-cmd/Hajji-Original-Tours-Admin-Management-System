@@ -10,10 +10,16 @@
   RewriteCond %{REQUEST_FILENAME} -d
   RewriteRule ^ - [L]
 
-  # 2. Single Page Application (SPA) route fallback
+  # 2. Prevent API requests from being rewritten to index.html
+  RewriteCond %{REQUEST_URI} ^/api [NC]
+  RewriteRule ^api/(.*)$ http://127.0.0.1:3000/api/$1 [P,L]
+
+  # 3. Single Page Application (SPA) route fallback
+  RewriteCond %{REQUEST_URI} !^/api
   RewriteCond %{DOCUMENT_ROOT}/dist/index.html -f
   RewriteRule ^ dist/index.html [L]
 
+  RewriteCond %{REQUEST_URI} !^/api
   RewriteRule ^ index.html [L]
 </IfModule>
 

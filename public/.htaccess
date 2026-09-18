@@ -10,11 +10,12 @@
   RewriteCond %{REQUEST_FILENAME} -d
   RewriteRule ^ - [L]
 
-  # 2. If Hostinger Apache is acting as reverse proxy for Node.js backend:
-  # (Uncomment the line below if Node runs on internal port and Apache serves the frontend)
-  # RewriteRule ^api/(.*)$ http://127.0.0.1:3000/api/$1 [P,L]
+  # 2. Prevent API requests from being rewritten to index.html
+  RewriteCond %{REQUEST_URI} ^/api [NC]
+  RewriteRule ^api/(.*)$ http://127.0.0.1:3000/api/$1 [P,L]
 
   # 3. Single Page Application (SPA) route fallback - all page reloads route to index.html
+  RewriteCond %{REQUEST_URI} !^/api
   RewriteRule ^ index.html [L]
 </IfModule>
 

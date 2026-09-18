@@ -234,13 +234,13 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     throw error;
   }
 
-  // If response was not valid JSON and not OK
-  if (!data && !response.ok) {
+  // If response was not valid JSON (e.g. server returned HTML or empty response)
+  if (!data) {
     const message = isHtml
-      ? `Unexpected server response: Server returned HTML (status ${status}) instead of API JSON from "${url}". If hosted on Hostinger, ensure the Node.js application is running and accessible.`
+      ? `Unexpected server response: Server returned HTML (status ${status}) instead of API JSON from "${url}". If hosted on Hostinger, ensure the Node.js application is running and reverse-proxying API requests.`
       : `HTTP ${status} ${response.statusText || 'Error'}: Unexpected server response format from "${url}".`;
     const error: ApiError = new Error(message);
-    error.status = status;
+    error.status = response.ok ? 502 : status;
     error.statusText = response.statusText;
     error.contentType = contentType;
     error.rawResponse = responseText.slice(0, 300);
