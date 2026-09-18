@@ -39,17 +39,17 @@ export function getRawViteApiBaseUrl(): string {
 
 /**
  * Returns the active API base URL:
- * 1. Runtime override in localStorage (allows interactive testing on diagnostic panel, purges stale vercel.app domains)
- * 2. Optional override via environment variable: import.meta.env.VITE_API_BASE_URL (excluding stale vercel.app)
- * 3. Fallback to same-origin ONLY if running directly on the production Hostinger domain (e.g. hajjioriginaltours.com)
+ * 1. Runtime override in localStorage (allows interactive testing on diagnostic panel)
+ * 2. Optional override via environment variable: import.meta.env.VITE_API_BASE_URL
+ * 3. Fallback to same-origin ONLY if running directly on the api backend subdomain
  * 4. Production Hostinger backend base URL: https://api.hajjioriginaltours.com
  */
 export function getApiBaseUrl(): string {
-  // 1. Runtime override in localStorage (allows interactive testing, purges any stale Vercel URL)
+  // 1. Runtime override in localStorage (allows interactive testing, purges any stale Vercel or old myc domains)
   if (typeof window !== 'undefined') {
     const custom = localStorage.getItem('hajji_custom_api_url');
     if (custom && custom.trim()) {
-      if (custom.includes('vercel.app')) {
+      if (custom.includes('vercel.app') || custom.includes('myc.hajjioriginaltours.com')) {
         localStorage.removeItem('hajji_custom_api_url');
       } else {
         return normalizeApiBaseUrl(custom);
@@ -57,16 +57,16 @@ export function getApiBaseUrl(): string {
     }
   }
 
-  // 2. Optional environment variable override: VITE_API_BASE_URL (excluding stale Vercel URLs)
+  // 2. Optional environment variable override: VITE_API_BASE_URL (excluding stale Vercel or old myc URLs)
   const envUrl = (import.meta as any).env?.VITE_API_BASE_URL;
-  if (envUrl && typeof envUrl === 'string' && envUrl.trim() && !envUrl.includes('vercel.app')) {
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim() && !envUrl.includes('vercel.app') && !envUrl.includes('myc.hajjioriginaltours.com')) {
     return normalizeApiBaseUrl(envUrl);
   }
 
-  // 3. Fallback to same-origin ONLY if running directly on the Hostinger domain
+  // 3. Fallback to same-origin ONLY if running directly on the api subdomain
   if (typeof window !== 'undefined' && window.location?.origin) {
     const origin = window.location.origin;
-    if (origin.includes('hajjioriginaltours.com')) {
+    if (origin.includes('api.hajjioriginaltours.com')) {
       return normalizeApiBaseUrl(origin);
     }
   }
