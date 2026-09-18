@@ -18,40 +18,61 @@ export function normalizeApiBaseUrl(url: string | undefined | null): string {
 }
 
 /**
- * Returns the exact string set in import.meta.env.VITE_API_BASE_URL (empty if not set)
+ * Production backend API Base URL hosted on Hostinger
+ */
+export const PRODUCTION_API_BASE_URL = 'https://myc.hajjioriginaltours.com';
+
+/**
+ * Returns the exact string set in import.meta.env.VITE_API_BASE_URL (empty if not set or stale Vercel URL)
  */
 export function getRawViteApiBaseUrl(): string {
   const envUrl = (import.meta as any).env?.VITE_API_BASE_URL;
-  return typeof envUrl === 'string' ? envUrl.trim() : '';
+  if (typeof envUrl === 'string') {
+    const trimmed = envUrl.trim();
+    if (trimmed.includes('vercel.app')) {
+      return '';
+    }
+    return trimmed;
+  }
+  return '';
 }
 
 /**
- * Returns the active API base URL.
- * 1. Runtime override in localStorage (allows interactive testing on diagnostic panel)
- * 2. Optional override via environment variable: import.meta.env.VITE_API_BASE_URL
- * 3. Fallback to same-origin (window.location.origin) when running in the browser
+ * Returns the active API base URL:
+ * 1. Runtime override in localStorage (allows interactive testing on diagnostic panel, purges stale vercel.app domains)
+ * 2. Optional override via environment variable: import.meta.env.VITE_API_BASE_URL (excluding stale vercel.app)
+ * 3. Fallback to same-origin ONLY if running directly on the production Hostinger domain (e.g. hajjioriginaltours.com)
+ * 4. Production Hostinger backend base URL: https://myc.hajjioriginaltours.com
  */
 export function getApiBaseUrl(): string {
-  // 1. Runtime override in localStorage (allows interactive testing on diagnostic panel)
+  // 1. Runtime override in localStorage (allows interactive testing, purges any stale Vercel URL)
   if (typeof window !== 'undefined') {
     const custom = localStorage.getItem('hajji_custom_api_url');
     if (custom && custom.trim()) {
-      return normalizeApiBaseUrl(custom);
+      if (custom.includes('vercel.app')) {
+        localStorage.removeItem('hajji_custom_api_url');
+      } else {
+        return normalizeApiBaseUrl(custom);
+      }
     }
   }
 
-  // 2. Optional environment variable override: VITE_API_BASE_URL
+  // 2. Optional environment variable override: VITE_API_BASE_URL (excluding stale Vercel URLs)
   const envUrl = (import.meta as any).env?.VITE_API_BASE_URL;
-  if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim() && !envUrl.includes('vercel.app')) {
     return normalizeApiBaseUrl(envUrl);
   }
 
-  // 3. Fallback to same-origin in the browser (Hostinger unified frontend + Express backend)
+  // 3. Fallback to same-origin ONLY if running directly on the Hostinger domain
   if (typeof window !== 'undefined' && window.location?.origin) {
-    return normalizeApiBaseUrl(window.location.origin);
+    const origin = window.location.origin;
+    if (origin.includes('hajjioriginaltours.com')) {
+      return normalizeApiBaseUrl(origin);
+    }
   }
 
-  return '';
+  // 4. Default to Hostinger production backend
+  return PRODUCTION_API_BASE_URL;
 }
 
 export function isApiBaseUrlConfigured(): boolean {
@@ -241,6 +262,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
 export const api = {
   // Config & Diagnostics
+  PRODUCTION_API_BASE_URL,
   getBaseUrl,
   getApiBaseUrl,
   getRawViteApiBaseUrl,
