@@ -103,7 +103,7 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
 
     const [countRow] = await dbQuery(`SELECT COUNT(*) as total FROM packages p ${whereSql}`, params);
     const rawPackages = await dbQuery(
-      `SELECT p.*, pc.name as category_name, pc.type as category_type,
+      `SELECT p.*, pc.name as category_name,
               (SELECT COUNT(*) FROM package_departures pd WHERE pd.package_id = p.id) as departures_count
        FROM packages p
        LEFT JOIN package_categories pc ON p.category_id = pc.id
@@ -127,6 +127,7 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
         status: isPublished ? 'published' : 'draft',
         raw_status: pkg.status,
         is_active: isPublished,
+        category_type: pkg.package_type || 'umrah',
         short_description: pkg.short_summary || pkg.detailed_description || pkg.short_description || '',
         starting_price: Number(pkg.starting_price) || 0,
         total_seats: Number(pkg.total_seats) || 50,
