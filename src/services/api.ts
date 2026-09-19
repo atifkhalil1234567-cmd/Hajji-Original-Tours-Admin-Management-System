@@ -321,9 +321,9 @@ export const api = {
   getDashboardStats: () => request<{ success: boolean; stats: DashboardStats; recentBookings: any[]; recentLeads: any[]; recentPayments: any[]; upcomingDepartures: any[]; expiringPassports: any[]; recentActivity: any[]; distribution: any }>('/dashboard/stats'),
 
   // Packages
-  getPackages: (params?: { category?: string; status?: string; search?: string }) => {
+  getPackages: (params?: { category?: string; status?: string; search?: string; limit?: number; page?: number }) => {
     const query = new URLSearchParams(params as any).toString();
-    return request<{ success: boolean; data: Package[] }>(`/packages${query ? `?${query}` : ''}`);
+    return request<{ success: boolean; data: Package[]; pagination?: any }>(`/packages${query ? `?${query}` : ''}`);
   },
   getPackageCategories: () => request<{ success: boolean; data: any[] }>('/packages/categories'),
   getPackageDepartures: () => request<{ success: boolean; data: any[] }>('/packages/departures'),

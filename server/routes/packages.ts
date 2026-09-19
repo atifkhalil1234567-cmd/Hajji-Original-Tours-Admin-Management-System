@@ -69,10 +69,12 @@ router.post('/categories', authenticate, authorize('packages', 'manage'), async 
 // 2. Packages List (Search, filter, paginate)
 router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
   try {
-    const { search, type, status, categoryId, page = 1, limit = 10 } = req.query;
-    const offset = (Number(page) - 1) * Number(limit);
+    const { search, type, status, categoryId, page = 1, limit } = req.query;
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = limit !== undefined ? Math.max(1, Number(limit)) : 500;
+    const offset = (pageNum - 1) * limitNum;
 
-    let whereSql = `WHERE p.deleted_at IS NULL`;
+    let whereSql = `WHERE (p.deleted_at IS NULL OR p.deleted_at = '0000-00-00 00:00:00')`;
     const params: any[] = [];
 
     if (search) {
@@ -84,8 +86,15 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
       params.push(type);
     }
     if (status) {
-      whereSql += ` AND p.status = ?`;
-      params.push(status);
+      const statusStr = String(status).toLowerCase();
+      if (statusStr === 'published' || statusStr === '1' || statusStr === 'active') {
+        whereSql += ` AND (p.status = 'published' OR p.status = '1' OR p.status = 1 OR p.status = 'active')`;
+      } else if (statusStr === 'draft' || statusStr === '0' || statusStr === 'inactive') {
+        whereSql += ` AND (p.status = 'draft' OR p.status = '0' OR p.status = 0 OR p.status = 'inactive')`;
+      } else {
+        whereSql += ` AND p.status = ?`;
+        params.push(status);
+      }
     }
     if (categoryId) {
       whereSql += ` AND p.category_id = ?`;
@@ -93,25 +102,49 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
     }
 
     const [countRow] = await dbQuery(`SELECT COUNT(*) as total FROM packages p ${whereSql}`, params);
-    const packages = await dbQuery(
+    const rawPackages = await dbQuery(
       `SELECT p.*, pc.name as category_name, pc.type as category_type,
               (SELECT COUNT(*) FROM package_departures pd WHERE pd.package_id = p.id) as departures_count
        FROM packages p
-       JOIN package_categories pc ON p.category_id = pc.id
+       LEFT JOIN package_categories pc ON p.category_id = pc.id
        ${whereSql}
        ORDER BY p.id DESC
-       LIMIT ${Number(limit)} OFFSET ${offset}`,
+       LIMIT ${limitNum} OFFSET ${offset}`,
       params
     );
+
+    // Normalize each package so frontend receives guaranteed consistent fields
+    const packages = rawPackages.map((pkg: any) => {
+      const isPublished =
+        pkg.status === 1 ||
+        pkg.status === '1' ||
+        pkg.status === 'published' ||
+        pkg.status === 'active' ||
+        pkg.status === true;
+
+      return {
+        ...pkg,
+        status: isPublished ? 'published' : 'draft',
+        raw_status: pkg.status,
+        is_active: isPublished,
+        short_description: pkg.short_summary || pkg.detailed_description || pkg.short_description || '',
+        starting_price: Number(pkg.starting_price) || 0,
+        total_seats: Number(pkg.total_seats) || 50,
+        booked_seats: Number(pkg.booked_seats) || 0,
+        duration_days: Number(pkg.duration_days) || 14,
+        gregorian_year: Number(pkg.gregorian_year) || 2026,
+        category_name: pkg.category_name || 'General Package',
+      };
+    });
 
     res.json({
       success: true,
       data: packages,
       pagination: {
-        total: countRow?.total || 0,
-        page: Number(page),
-        limit: Number(limit),
-        totalPages: Math.ceil((countRow?.total || 0) / Number(limit)),
+        total: countRow?.total || packages.length,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil((countRow?.total || packages.length) / limitNum),
       },
     });
   } catch (e: any) {
@@ -168,7 +201,7 @@ router.get('/:id', authenticate, async (req: AuthRequest, res: Response): Promis
     const pkgId = req.params.id;
     const isNum = !isNaN(Number(pkgId));
     const pkgs = await dbQuery(
-      `SELECT p.*, pc.name as category_name FROM packages p JOIN package_categories pc ON p.category_id = pc.id WHERE ${isNum ? 'p.id = ?' : 'p.slug = ?'} AND p.deleted_at IS NULL`,
+      `SELECT p.*, pc.name as category_name FROM packages p LEFT JOIN package_categories pc ON p.category_id = pc.id WHERE ${isNum ? 'p.id = ?' : 'p.slug = ?'} AND (p.deleted_at IS NULL OR p.deleted_at = '0000-00-00 00:00:00')`,
       [pkgId]
     );
     if (pkgs.length === 0) {
@@ -192,10 +225,27 @@ router.get('/:id', authenticate, async (req: AuthRequest, res: Response): Promis
       [actualId]
     );
 
+    const isPublished =
+      pkg.status === 1 ||
+      pkg.status === '1' ||
+      pkg.status === 'published' ||
+      pkg.status === 'active' ||
+      pkg.status === true;
+
     res.json({
       success: true,
       data: {
         ...pkg,
+        status: isPublished ? 'published' : 'draft',
+        raw_status: pkg.status,
+        is_active: isPublished,
+        short_description: pkg.short_summary || pkg.detailed_description || pkg.short_description || '',
+        starting_price: Number(pkg.starting_price) || 0,
+        total_seats: Number(pkg.total_seats) || 50,
+        booked_seats: Number(pkg.booked_seats) || 0,
+        duration_days: Number(pkg.duration_days) || 14,
+        gregorian_year: Number(pkg.gregorian_year) || 2026,
+        category_name: pkg.category_name || 'General Package',
         departures,
         prices,
         itineraries,
@@ -355,12 +405,19 @@ router.patch('/:id/toggle-status', authenticate, authorize('packages', 'manage')
     }
 
     const currentStatus = pkgs[0].status;
+    const isCurrentlyActive =
+      currentStatus === 'published' ||
+      currentStatus === 1 ||
+      currentStatus === '1' ||
+      currentStatus === 'active' ||
+      currentStatus === true;
+
     let nextStatus: string;
     if (explicitStatus) {
       nextStatus = explicitStatus;
     } else {
       // If currently published (ON), toggle to draft (OFF), and vice versa
-      nextStatus = currentStatus === 'published' ? 'draft' : 'published';
+      nextStatus = isCurrentlyActive ? 'draft' : 'published';
     }
 
     await dbRun(`UPDATE packages SET status = ? WHERE id = ?`, [nextStatus, pkgId]);

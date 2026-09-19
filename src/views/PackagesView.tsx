@@ -25,10 +25,16 @@ export const PackagesView: React.FC = () => {
   const [packages, setPackages] = useState<Package[]>([]);
   const [categories, setCategories] = useState<PackageCategory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft'>('all');
   const [togglingId, setTogglingId] = useState<number | null>(null);
+
+  // Helper to reliably determine if a package is active (supports 1, '1', 'published', 'active', true)
+  const isPackageActive = (status: any): boolean => {
+    return status === 'published' || status === 1 || status === '1' || status === 'active' || status === true;
+  };
 
   // Modal States
   const [isPackageModalOpen, setIsPackageModalOpen] = useState(false);
@@ -65,13 +71,30 @@ export const PackagesView: React.FC = () => {
 
   const loadPackages = async () => {
     setLoading(true);
+    setFetchError(null);
     try {
       const res = await api.getPackages();
-      if (res.success) setPackages(res.data);
-      const catRes = await api.getPackageCategories();
-      if (catRes.success) setCategories(catRes.data);
-    } catch (e) {
-      console.error(e);
+      if (res && res.success && Array.isArray(res.data)) {
+        setPackages(res.data);
+      } else if (Array.isArray(res)) {
+        setPackages(res);
+      } else if (res && Array.isArray((res as any).packages)) {
+        setPackages((res as any).packages);
+      } else {
+        setPackages([]);
+      }
+
+      try {
+        const catRes = await api.getPackageCategories();
+        if (catRes && catRes.success && Array.isArray(catRes.data)) {
+          setCategories(catRes.data);
+        }
+      } catch (catErr) {
+        console.warn('[PackagesView] Categories loading failed:', catErr);
+      }
+    } catch (e: any) {
+      console.error('[PackagesView] Error loading packages:', e);
+      setFetchError(e.message || 'Failed to fetch packages from database');
     } finally {
       setLoading(false);
     }
@@ -118,8 +141,8 @@ export const PackagesView: React.FC = () => {
       currency: cCode,
       currency_id: cId,
       total_seats: pkg.total_seats || 50,
-      status: pkg.status || 'published',
-      short_description: pkg.short_description || '',
+      status: isPackageActive(pkg.status) ? 'published' : 'draft',
+      short_description: pkg.short_description || (pkg as any).short_summary || '',
     });
     setIsPackageModalOpen(true);
   };
@@ -129,7 +152,7 @@ export const PackagesView: React.FC = () => {
     const pkg = packages.find((p) => p.id === id);
     if (!pkg) return;
 
-    const isCurrentlyOn = pkg.status === 'published';
+    const isCurrentlyOn = isPackageActive(pkg.status);
     const nextStatus = isCurrentlyOn ? 'draft' : 'published';
 
     // Optimistically update UI
@@ -213,25 +236,37 @@ export const PackagesView: React.FC = () => {
     }
   };
 
-  const activeCount = packages.filter((p) => p.status === 'published').length;
-  const inactiveCount = packages.filter((p) => p.status !== 'published').length;
+  const activeCount = packages.filter((p) => isPackageActive(p.status)).length;
+  const inactiveCount = packages.filter((p) => !isPackageActive(p.status)).length;
 
   const filteredPackages = packages.filter((pkg) => {
-    const matchesSearch =
-      pkg.title.toLowerCase().includes(search.toLowerCase()) ||
-      pkg.origin_city.toLowerCase().includes(search.toLowerCase());
+    const titleMatch = (pkg.title || '').toLowerCase().includes(search.toLowerCase());
+    const originMatch = (pkg.origin_city || '').toLowerCase().includes(search.toLowerCase());
+    const matchesSearch = !search || titleMatch || originMatch;
     const matchesCategory =
       selectedCategory === 'all' || pkg.package_type === selectedCategory;
     const matchesStatus =
       statusFilter === 'all' ||
       (statusFilter === 'published'
-        ? pkg.status === 'published'
-        : pkg.status !== 'published');
+        ? isPackageActive(pkg.status)
+        : !isPackageActive(pkg.status));
     return matchesSearch && matchesCategory && matchesStatus;
   });
 
   return (
     <div id="packages-view" className="space-y-6 pb-12">
+      {fetchError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-2xl flex items-center justify-between text-xs">
+          <span>{fetchError}</span>
+          <button
+            onClick={loadPackages}
+            className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-800 font-semibold rounded-lg transition-colors cursor-pointer"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Top Header Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -360,7 +395,7 @@ export const PackagesView: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {filteredPackages.map((pkg) => {
-            const isOn = pkg.status === 'published';
+            const isOn = isPackageActive(pkg.status);
             const seatsOccupied = pkg.booked_seats || 0;
             const seatsTotal = pkg.total_seats || 50;
             const seatPercent = Math.round((seatsOccupied / seatsTotal) * 100);
