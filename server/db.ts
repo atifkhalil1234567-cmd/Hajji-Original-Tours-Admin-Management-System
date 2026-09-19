@@ -112,9 +112,18 @@ export async function initDatabase(): Promise<DbStatus> {
 
     // Ensure all financial tables, currencies, and system defaults use USD ($)
     try {
+      try {
+        sqliteDb.run("ALTER TABLE packages ADD COLUMN currency_id INT UNSIGNED DEFAULT 1;");
+      } catch {
+        // Column already exists
+      }
       sqliteDb.run("UPDATE currencies SET is_default = 1 WHERE code = 'USD';");
       sqliteDb.run("UPDATE currencies SET is_default = 0 WHERE code != 'USD';");
       sqliteDb.run("UPDATE packages SET currency = 'USD' WHERE currency = 'GBP' OR currency IS NULL;");
+      sqliteDb.run("UPDATE packages SET currency_id = 1 WHERE currency = 'USD' OR currency_id IS NULL OR currency_id = 0;");
+      sqliteDb.run("UPDATE packages SET currency_id = 2 WHERE currency = 'SAR';");
+      sqliteDb.run("UPDATE packages SET currency_id = 3 WHERE currency = 'GBP';");
+      sqliteDb.run("UPDATE packages SET currency_id = 4 WHERE currency = 'EUR';");
       sqliteDb.run("UPDATE bookings SET currency = 'USD' WHERE currency = 'GBP' OR currency IS NULL;");
       sqliteDb.run("UPDATE payments SET currency = 'USD' WHERE currency = 'GBP' OR currency IS NULL;");
       sqliteDb.run("UPDATE expenses SET currency = 'USD' WHERE currency = 'GBP' OR currency IS NULL;");

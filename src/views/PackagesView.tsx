@@ -19,6 +19,7 @@ import { api } from '../services/api';
 import { Package, PackageCategory } from '../types';
 import { Badge } from '../components/common/Badge';
 import { Modal } from '../components/common/Modal';
+import { CURRENCY_CODE_MAP, resolveCurrency, getCurrencySymbol } from '../utils/currency';
 
 export const PackagesView: React.FC = () => {
   const [packages, setPackages] = useState<Package[]>([]);
@@ -47,6 +48,7 @@ export const PackagesView: React.FC = () => {
     destination_city: 'Jeddah / Madinah',
     starting_price: 11500,
     currency: 'USD',
+    currency_id: 1,
     total_seats: 60,
     status: 'published',
     short_description: 'Luxury 5-Star front-row Haram hotels with VIP Mina air-conditioned tents and private GMC transport.',
@@ -92,6 +94,7 @@ export const PackagesView: React.FC = () => {
       destination_city: 'Jeddah / Madinah',
       starting_price: 11500,
       currency: 'USD',
+      currency_id: 1,
       total_seats: 60,
       status: 'published',
       short_description: 'Luxury 5-Star front-row Haram hotels with VIP Mina air-conditioned tents and private GMC transport.',
@@ -101,6 +104,7 @@ export const PackagesView: React.FC = () => {
 
   const handleEditPackage = (pkg: Package) => {
     setEditingPackage(pkg);
+    const { currency_id: cId, currency: cCode } = resolveCurrency(pkg.currency_id, pkg.currency);
     setPkgForm({
       title: pkg.title,
       category_id: pkg.category_id || 1,
@@ -111,7 +115,8 @@ export const PackagesView: React.FC = () => {
       origin_city: pkg.origin_city || 'London Heathrow',
       destination_city: pkg.destination_city || 'Jeddah / Madinah',
       starting_price: Number(pkg.starting_price) || 0,
-      currency: pkg.currency || 'USD',
+      currency: cCode,
+      currency_id: cId,
       total_seats: pkg.total_seats || 50,
       status: pkg.status || 'published',
       short_description: pkg.short_description || '',
@@ -156,14 +161,21 @@ export const PackagesView: React.FC = () => {
   const handleSavePackage = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const { currency_id: cId, currency: cCode } = resolveCurrency(pkgForm.currency_id, pkgForm.currency);
+      const payload = {
+        ...pkgForm,
+        currency: cCode,
+        currency_id: cId,
+      };
+
       if (editingPackage) {
-        const res = await api.updatePackage(editingPackage.id, pkgForm);
+        const res = await api.updatePackage(editingPackage.id, payload);
         if (res.success) {
           setIsPackageModalOpen(false);
           loadPackages();
         }
       } else {
-        const res = await api.createPackage(pkgForm);
+        const res = await api.createPackage(payload);
         if (res.success) {
           setIsPackageModalOpen(false);
           loadPackages();
@@ -434,7 +446,7 @@ export const PackagesView: React.FC = () => {
                     <div>
                       <span className="text-stone-500">Starting: </span>
                       <span className="font-extrabold text-amber-700 text-sm">
-                        {pkg.currency === 'SAR' ? '﷼' : pkg.currency === 'GBP' ? '£' : '$'}
+                        {getCurrencySymbol(pkg.currency || CURRENCY_CODE_MAP[pkg.currency_id || 1])}
                         {Number(pkg.starting_price).toLocaleString()}
                       </span>
                     </div>
@@ -676,13 +688,32 @@ export const PackagesView: React.FC = () => {
               <label className="block text-xs font-semibold text-stone-700 mb-1">
                 Starting Base Price ($ USD / ﷼ SAR)
               </label>
-              <input
-                type="number"
-                min="100"
-                value={pkgForm.starting_price}
-                onChange={(e) => setPkgForm({ ...pkgForm, starting_price: Number(e.target.value) })}
-                className="w-full px-3 py-2 text-xs border border-stone-300 rounded-xl"
-              />
+              <div className="flex rounded-xl border border-stone-300 overflow-hidden bg-white focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:border-amber-500">
+                <select
+                  value={pkgForm.currency_id}
+                  onChange={(e) => {
+                    const cid = Number(e.target.value);
+                    const code = CURRENCY_CODE_MAP[cid] || 'USD';
+                    setPkgForm({ ...pkgForm, currency_id: cid, currency: code });
+                  }}
+                  className="px-2.5 py-2 text-xs font-semibold bg-stone-100 border-r border-stone-300 text-stone-800 focus:outline-hidden cursor-pointer"
+                >
+                  <option value={1}>$ USD</option>
+                  <option value={2}>﷼ SAR</option>
+                  <option value={3}>£ GBP</option>
+                  <option value={4}>€ EUR</option>
+                  <option value={5}>CA$ CAD</option>
+                  <option value={6}>₨ PKR</option>
+                </select>
+                <input
+                  type="number"
+                  min="100"
+                  value={pkgForm.starting_price}
+                  onChange={(e) => setPkgForm({ ...pkgForm, starting_price: Number(e.target.value) })}
+                  className="w-full px-3 py-2 text-xs text-stone-900 focus:outline-hidden"
+                  placeholder="Price"
+                />
+              </div>
             </div>
 
             <div>

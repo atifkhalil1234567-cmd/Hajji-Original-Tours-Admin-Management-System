@@ -4,6 +4,43 @@ import { authenticate, authorize, logActivity, AuthRequest } from '../middleware
 
 const router = Router();
 
+// Canonical Currency Mapping (aligned with production `currencies` table: 1=USD, 2=SAR, 3=GBP, 4=EUR, 5=CAD, 6=PKR)
+export const CURRENCY_ID_MAP: Record<string, number> = {
+  USD: 1,
+  SAR: 2,
+  GBP: 3,
+  EUR: 4,
+  CAD: 5,
+  PKR: 6,
+};
+
+export const CURRENCY_CODE_MAP: Record<number, string> = {
+  1: 'USD',
+  2: 'SAR',
+  3: 'GBP',
+  4: 'EUR',
+  5: 'CAD',
+  6: 'PKR',
+};
+
+export function resolveCurrency(currencyId?: any, currencyCode?: any): { currency_id: number; currency: string } {
+  const cId = Number(currencyId);
+  const cCode = typeof currencyCode === 'string' ? currencyCode.trim().toUpperCase() : '';
+
+  if (cId && CURRENCY_CODE_MAP[cId]) {
+    const matchedCode = CURRENCY_CODE_MAP[cId];
+    const finalCode = cCode && CURRENCY_ID_MAP[cCode] === cId ? cCode : matchedCode;
+    return { currency_id: cId, currency: finalCode };
+  }
+
+  if (cCode && CURRENCY_ID_MAP[cCode]) {
+    const matchedId = CURRENCY_ID_MAP[cCode];
+    return { currency_id: matchedId, currency: cCode };
+  }
+
+  return { currency_id: 1, currency: 'USD' };
+}
+
 // 1. Categories
 router.get('/categories', authenticate, async (req: AuthRequest, res: Response) => {
   try {
@@ -187,6 +224,7 @@ router.post('/', authenticate, authorize('packages', 'manage'), async (req: Auth
       origin_city,
       starting_price,
       currency,
+      currency_id,
       total_seats,
       flights_included,
       visa_included,
@@ -197,14 +235,16 @@ router.post('/', authenticate, authorize('packages', 'manage'), async (req: Auth
       status,
     } = req.body;
 
+    const { currency_id: resolvedCurrencyId, currency: resolvedCurrency } = resolveCurrency(currency_id, currency);
+
     const generatedSlug = slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + Date.now().toString().slice(-4);
 
     const result = await dbRun(
       `INSERT INTO packages (
         category_id, title, slug, package_type, hajj_type, gregorian_year, duration_days,
-        origin_city, starting_price, currency, total_seats, flights_included, visa_included,
+        origin_city, starting_price, currency, currency_id, total_seats, flights_included, visa_included,
         ziyarat_included, qurbani_included, short_summary, detailed_description, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         category_id,
         title,
@@ -215,7 +255,8 @@ router.post('/', authenticate, authorize('packages', 'manage'), async (req: Auth
         duration_days || 14,
         origin_city || 'London',
         starting_price || 0,
-        currency || 'USD',
+        resolvedCurrency,
+        resolvedCurrencyId,
         total_seats || 50,
         flights_included ? 1 : 0,
         visa_included ? 1 : 0,
@@ -248,6 +289,7 @@ router.put('/:id', authenticate, authorize('packages', 'manage'), async (req: Au
       origin_city,
       starting_price,
       currency,
+      currency_id,
       total_seats,
       flights_included,
       visa_included,
@@ -258,10 +300,12 @@ router.put('/:id', authenticate, authorize('packages', 'manage'), async (req: Au
       status,
     } = req.body;
 
+    const { currency_id: resolvedCurrencyId, currency: resolvedCurrency } = resolveCurrency(currency_id, currency);
+
     await dbRun(
       `UPDATE packages SET
         category_id = ?, title = ?, package_type = ?, hajj_type = ?, gregorian_year = ?,
-        duration_days = ?, origin_city = ?, starting_price = ?, currency = ?, total_seats = ?,
+        duration_days = ?, origin_city = ?, starting_price = ?, currency = ?, currency_id = ?, total_seats = ?,
         flights_included = ?, visa_included = ?, ziyarat_included = ?, qurbani_included = ?,
         short_summary = ?, detailed_description = ?, status = ?
        WHERE id = ?`,
@@ -274,7 +318,8 @@ router.put('/:id', authenticate, authorize('packages', 'manage'), async (req: Au
         duration_days,
         origin_city,
         starting_price,
-        currency,
+        resolvedCurrency,
+        resolvedCurrencyId,
         total_seats,
         flights_included ? 1 : 0,
         visa_included ? 1 : 0,

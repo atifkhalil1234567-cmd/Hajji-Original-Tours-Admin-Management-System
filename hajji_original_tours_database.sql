@@ -300,6 +300,7 @@ CREATE TABLE `packages` (
   `origin_city` VARCHAR(100) DEFAULT 'London',
   `starting_price` DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
   `currency` VARCHAR(10) DEFAULT 'USD',
+  `currency_id` INT UNSIGNED DEFAULT 1,
   `total_seats` INT UNSIGNED NOT NULL DEFAULT 50,
   `booked_seats` INT UNSIGNED NOT NULL DEFAULT 0,
   `flights_included` TINYINT(1) DEFAULT 1,
@@ -319,7 +320,8 @@ CREATE TABLE `packages` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted_at` TIMESTAMP NULL DEFAULT NULL,
-  CONSTRAINT `fk_pkg_cat` FOREIGN KEY (`category_id`) REFERENCES `package_categories` (`id`)
+  CONSTRAINT `fk_pkg_cat` FOREIGN KEY (`category_id`) REFERENCES `package_categories` (`id`),
+  CONSTRAINT `fk_packages_currency` FOREIGN KEY (`currency_id`) REFERENCES `currencies` (`id`) ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `package_departures` (

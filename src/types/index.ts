@@ -78,6 +78,7 @@ export interface Package {
   destination_city: string;
   starting_price: number;
   currency: string;
+  currency_id?: number;
   total_seats: number;
   booked_seats: number;
   short_description?: string;
