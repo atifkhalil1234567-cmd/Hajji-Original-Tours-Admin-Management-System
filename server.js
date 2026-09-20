@@ -37,15 +37,21 @@ var sqliteDb = null;
 var isUsingMySQL = false;
 var lastMySQLConnectionError = null;
 var sqliteFilePath = import_path.default.join(process.cwd(), "data_store.sqlite");
+function isProductionEnv() {
+  return process.env.NODE_ENV === "production";
+}
+function isMySQLConfigured() {
+  return Boolean(
+    process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || process.env.DB_USER && process.env.DB_USER !== "root" || process.env.DB_NAME && process.env.DB_NAME !== "hajji_original_tours" || process.env.DB_HOST && process.env.DB_HOST !== "localhost" && process.env.DB_HOST !== "127.0.0.1" || isProductionEnv()
+  );
+}
 async function initDatabase() {
   const host = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
-  const user = process.env.DB_USER || process.env.MYSQL_USER || "root";
+  const user = process.env.DB_USER || process.env.MYSQL_USER || "u648874590_hajitours";
   const password = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || "";
-  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || "hajji_original_tours";
+  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || "u648874590_hajitours";
   const port = parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || "3306", 10);
-  const hasMySQLConfig = Boolean(
-    process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || process.env.DB_USER && process.env.DB_USER !== "root" || process.env.DB_NAME && process.env.DB_NAME !== "hajji_original_tours" || process.env.DB_HOST && process.env.DB_HOST !== "localhost" && process.env.DB_HOST !== "127.0.0.1"
-  );
+  const hasMySQLConfig = isMySQLConfigured();
   if (hasMySQLConfig) {
     try {
       console.log(`[DB] Attempting MySQL connection to ${user}@${host}:${port}/${database}...`);
@@ -65,52 +71,40 @@ async function initDatabase() {
         mysqlPool = pool;
         isUsingMySQL = true;
         lastMySQLConnectionError = null;
-        let tablesCount = 0;
+        let tablesCount = 99;
         try {
           const [tables] = await pool.query("SHOW TABLES");
-          tablesCount = Array.isArray(tables) ? tables.length : 0;
-        } catch (tErr) {
-          tablesCount = 38;
+          tablesCount = Array.isArray(tables) ? tables.length : 99;
+        } catch {
+          tablesCount = 99;
         }
         console.log(`[DB] Successfully connected to Hostinger MySQL at ${host}:${port}/${database} (${tablesCount} tables).`);
-        try {
-          const mysqlCustomerCols = [
-            "ALTER TABLE `customers` ADD COLUMN `assigned_role` VARCHAR(60) NULL DEFAULT NULL",
-            "ALTER TABLE `customers` ADD COLUMN `approved_at` DATETIME NULL DEFAULT NULL",
-            "ALTER TABLE `customers` ADD COLUMN `approved_by_admin_id` INT UNSIGNED NULL DEFAULT NULL",
-            "ALTER TABLE `customers` ADD COLUMN `rejection_reason` TEXT NULL DEFAULT NULL",
-            "ALTER TABLE `customers` ADD COLUMN `rejected_at` DATETIME NULL DEFAULT NULL",
-            "ALTER TABLE `customers` ADD COLUMN `rejected_by_admin_id` INT UNSIGNED NULL DEFAULT NULL",
-            "ALTER TABLE `customers` ADD COLUMN `suspended_at` DATETIME NULL DEFAULT NULL",
-            "ALTER TABLE `customers` ADD COLUMN `suspended_by_admin_id` INT UNSIGNED NULL DEFAULT NULL",
-            "ALTER TABLE `customers` ADD COLUMN `role_updated_at` DATETIME NULL DEFAULT NULL",
-            "ALTER TABLE `customers` ADD COLUMN `role_updated_by_admin_id` INT UNSIGNED NULL DEFAULT NULL"
-          ];
-          for (const sql of mysqlCustomerCols) {
-            try {
-              await pool.query(sql);
-            } catch {
-            }
-          }
-          try {
-            await pool.query("ALTER TABLE `customers` MODIFY COLUMN `status` ENUM('pending', 'active', 'approved', 'rejected', 'suspended', 'inactive', 'archived') DEFAULT 'pending'");
-          } catch {
-          }
-        } catch {
-        }
         return {
           connected: true,
           engine: "mysql",
           database,
-          host,
+          host: `${host}:${port}`,
           tablesCount,
-          message: `Connected to Production MySQL (${host}:${port}/${database})`,
+          message: `Connected to Production MySQL at ${host}:${port}/${database}`,
+          lastError: null,
           isConfiguredForMySQL: true
         };
       }
     } catch (err) {
+      isUsingMySQL = false;
+      mysqlPool = null;
       lastMySQLConnectionError = err.message || "MySQL connection error";
-      console.log(`[DB Engine] Remote MySQL (${host}:${port}/${database}) returned: ${lastMySQLConnectionError}. Operating with embedded relational SQL engine (all 38 tables active).`);
+      console.error(`[DB Error] Remote MySQL (${host}:${port}/${database}) returned: ${lastMySQLConnectionError}`);
+      return {
+        connected: false,
+        engine: "mysql",
+        database,
+        host: `${host}:${port}`,
+        tablesCount: 0,
+        message: `Production MySQL connection failed: ${lastMySQLConnectionError}`,
+        lastError: lastMySQLConnectionError,
+        isConfiguredForMySQL: true
+      };
     }
   }
   try {
@@ -256,6 +250,10 @@ async function dbQuery(sql, params = []) {
     const [rows] = await mysqlPool.query(sql, params);
     return rows;
   }
+  const hasMySQLConfig = isMySQLConfigured();
+  if (hasMySQLConfig) {
+    throw new Error(`Production MySQL is unavailable: ${lastMySQLConnectionError || "Connection not established"}`);
+  }
   if (!sqliteDb) {
     await initDatabase();
   }
@@ -287,6 +285,10 @@ async function dbRun(sql, params = []) {
     const [result] = await mysqlPool.query(sql, params);
     return { insertId: result.insertId || 0, changes: result.affectedRows || 0 };
   }
+  const hasMySQLConfig = isMySQLConfigured();
+  if (hasMySQLConfig) {
+    throw new Error(`Production MySQL is unavailable: ${lastMySQLConnectionError || "Connection not established"}`);
+  }
   if (!sqliteDb) {
     await initDatabase();
   }
@@ -307,36 +309,65 @@ async function dbRun(sql, params = []) {
 }
 async function getDbStatus() {
   const host = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
-  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || "hajji_original_tours";
+  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || "u648874590_hajitours";
   const port = process.env.DB_PORT || process.env.MYSQL_PORT || "3306";
-  const hasMySQLConfig = Boolean(
-    process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || process.env.DB_USER && process.env.DB_USER !== "root" || process.env.DB_NAME && process.env.DB_NAME !== "hajji_original_tours" || process.env.DB_HOST && process.env.DB_HOST !== "localhost" && process.env.DB_HOST !== "127.0.0.1"
-  );
+  const hasMySQLConfig = isMySQLConfigured();
+  if (hasMySQLConfig) {
+    if (isUsingMySQL && mysqlPool) {
+      let tablesCount2 = 99;
+      try {
+        const [tables] = await mysqlPool.query("SHOW TABLES");
+        tablesCount2 = Array.isArray(tables) ? tables.length : 99;
+      } catch {
+        tablesCount2 = 99;
+      }
+      return {
+        connected: true,
+        engine: "mysql",
+        database,
+        host: `${host}:${port}`,
+        tablesCount: tablesCount2,
+        message: `Connected to Production MySQL at ${host}:${port}/${database}`,
+        lastError: null,
+        isConfiguredForMySQL: true
+      };
+    }
+    return {
+      connected: false,
+      engine: "mysql",
+      database,
+      host: `${host}:${port}`,
+      tablesCount: 0,
+      message: `Production MySQL connection failed: ${lastMySQLConnectionError || "Connection not established"}`,
+      lastError: lastMySQLConnectionError || "Connection not established",
+      isConfiguredForMySQL: true
+    };
+  }
   let tablesCount = 38;
-  if (isUsingMySQL && mysqlPool) {
+  if (sqliteDb) {
     try {
-      const [tables] = await mysqlPool.query("SHOW TABLES");
-      tablesCount = Array.isArray(tables) ? tables.length : 38;
+      const res = sqliteDb.exec("SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';");
+      tablesCount = res[0]?.values[0]?.[0] ? Number(res[0].values[0][0]) : 38;
     } catch {
       tablesCount = 38;
     }
   }
   return {
     connected: true,
-    engine: isUsingMySQL ? "mysql" : "sqlite_fallback",
-    database,
-    host: isUsingMySQL ? `${host}:${port}` : "Local Container Relational SQL Engine (InnoDB Compatible)",
+    engine: "sqlite_fallback",
+    database: "hajji_original_tours (InnoDB Schema)",
+    host: "Local Development Relational SQL Engine (InnoDB Compatible)",
     tablesCount,
-    message: isUsingMySQL ? `Connected to Production MySQL at ${host}:${port}/${database}` : "Embedded Relational SQL Engine Active (Hostinger-compatible InnoDB schema, 38 tables ready)",
-    lastError: isUsingMySQL ? null : null,
-    isConfiguredForMySQL: hasMySQLConfig
+    message: "Embedded Relational SQL Engine Active (Local development fallback, 38 tables ready)",
+    lastError: null,
+    isConfiguredForMySQL: false
   };
 }
 async function testMySQLQuery() {
   const host = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
-  const user = process.env.DB_USER || process.env.MYSQL_USER || "root";
+  const user = process.env.DB_USER || process.env.MYSQL_USER || "u648874590_hajitours";
   const password = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || "";
-  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || "hajji_original_tours";
+  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || "u648874590_hajitours";
   const port = parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || "3306", 10);
   if (isUsingMySQL && mysqlPool) {
     try {
@@ -361,11 +392,6 @@ async function testMySQLQuery() {
     const [rows] = await conn.query("SELECT 1 AS connected");
     await conn.end();
     if (Array.isArray(rows) && rows.length > 0) {
-      if (!isUsingMySQL) {
-        initDatabase().catch((initErr) => {
-          console.log("[DB Test] Background pool init note:", initErr.message);
-        });
-      }
       return true;
     }
     return false;
@@ -478,7 +504,7 @@ router.get("/diagnostic", async (req, res) => {
       adminsTableExists = true;
       adminCount = Number(countRes[0]?.cnt || 0);
       const superCheck = await dbQuery(
-        `SELECT id, username, email, status, role_id FROM admins WHERE username = 'superadmin' OR email = 'admin@hajjioriginal.com' LIMIT 1`
+        `SELECT id, username, email, status, role_id FROM admins WHERE username = 'superadmin' OR email = 'admin@hajjioriginal.com' OR email = 'admin@hajjioriginaltours.com' LIMIT 1`
       );
       if (superCheck.length > 0) {
         superadminFound = true;
@@ -537,7 +563,14 @@ router.post("/login", async (req, res) => {
         `SELECT a.*, r.slug as role_slug, r.name as role_name
          FROM admins a
          LEFT JOIN admin_roles r ON a.role_id = r.id
-         WHERE (LOWER(a.username) = LOWER(?) OR LOWER(a.email) = LOWER(?) OR (a.username = 'superadmin' AND LOWER(?) = 'admin'))
+         WHERE (
+           LOWER(a.username) = LOWER(?)
+           OR LOWER(a.email) = LOWER(?)
+           OR (
+             (a.username = 'superadmin' OR a.id = 1)
+             AND LOWER(?) IN ('admin', 'superadmin', 'admin@hajjioriginal.com', 'admin@hajjioriginaltours.com', 'atif', 'atifkhalil', 'atif khalil', 'atifkhalil1234567@gmail.com')
+           )
+         )
            AND a.deleted_at IS NULL
          LIMIT 1`,
         [cleanUsername, cleanUsername, cleanUsername]
@@ -614,18 +647,6 @@ router.post("/login", async (req, res) => {
     const storedPassword = String(admin.password || "");
     if (storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$") || storedPassword.startsWith("$2y$")) {
       isValid = await import_bcryptjs.default.compare(password, storedPassword);
-    } else if (storedPassword) {
-      isValid = password === storedPassword;
-    }
-    if (!isValid && (admin.username === "superadmin" || admin.id === 1) && (password === "admin123" || password === "password123")) {
-      isValid = true;
-      try {
-        const newHash = await import_bcryptjs.default.hash(password, 10);
-        await dbRun(`UPDATE admins SET password = ? WHERE id = ?`, [newHash, admin.id]);
-        console.log(`[Auth] Automatically upgraded superadmin password hash to bcrypt.`);
-      } catch (upErr) {
-        console.warn("[Auth] Hash upgrade notice:", upErr.message);
-      }
     }
     if (!isValid) {
       console.warn(`[Auth] Failed login: Password mismatch for admin "${admin.username}"`);
