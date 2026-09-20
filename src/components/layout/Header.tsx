@@ -84,6 +84,10 @@ export const Header: React.FC<HeaderProps> = ({
       title: 'Website CMS & Media Library',
       desc: 'Homepage sliders, pilgrims testimonials, FAQ answers & asset management',
     },
+    user_management: {
+      title: 'User Management & Approvals',
+      desc: 'Customer registrations, role assignments, approval workflows & audit trails',
+    },
     settings: {
       title: 'System & Hostinger Database',
       desc: 'Admin permissions matrix, agency credentials & Hostinger MySQL status',

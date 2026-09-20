@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { api } from './services/api';
-import { AdminUser, DatabaseStatus, DashboardStats, NotificationItem } from './types';
+import { AdminUser, DatabaseStatus, DashboardStats, NotificationItem, CustomerUser } from './types';
 import { Sidebar, NavTab } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { LoginView } from './views/LoginView';
+import { CustomerLoginView } from './views/CustomerLoginView';
+import { CustomerRegisterView } from './views/CustomerRegisterView';
+import { CustomerDashboardView } from './views/CustomerDashboardView';
 import { DashboardView } from './views/DashboardView';
 import { PackagesView } from './views/PackagesView';
 import { HotelsView } from './views/HotelsView';
@@ -13,13 +16,86 @@ import { FinanceView } from './views/FinanceView';
 import { TravelLogisticsView } from './views/TravelLogisticsView';
 import { CmsMediaView } from './views/CmsMediaView';
 import { AdminSettingsView } from './views/AdminSettingsView';
+import { UserManagementView } from './views/UserManagementView';
+
+type AppRoute = 'admin_login' | 'admin_app' | 'customer_login' | 'customer_register' | 'customer_dashboard';
+
+function getInitialRoute(): AppRoute {
+  if (typeof window === 'undefined') return 'admin_login';
+  const path = window.location.pathname.toLowerCase();
+  const hash = window.location.hash.toLowerCase();
+
+  if (path.includes('/customer/register') || hash.includes('/customer/register')) {
+    return 'customer_register';
+  }
+  if (path.includes('/customer/dashboard') || hash.includes('/customer/dashboard')) {
+    return 'customer_dashboard';
+  }
+  if (path.includes('/customer/login') || hash.includes('/customer/login') || path.includes('/customer')) {
+    return 'customer_login';
+  }
+  return 'admin_login';
+}
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<AdminUser | null>(null);
+  const [currentRoute, setCurrentRoute] = useState<AppRoute>(getInitialRoute());
+  const [currentCustomer, setCurrentCustomer] = useState<CustomerUser | null>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('hajji_customer_user');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch {}
+      }
+    }
+    return null;
+  });
+
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [collapsedSidebar, setCollapsedSidebar] = useState(false);
   const [dbStatus, setDbStatus] = useState<DatabaseStatus | null>(null);
+
+  const navigateTo = (route: AppRoute, newPath?: string) => {
+    setCurrentRoute(route);
+    if (typeof window !== 'undefined') {
+      let path = newPath;
+      if (!path) {
+        if (route === 'customer_login') path = '/customer/login';
+        else if (route === 'customer_register') path = '/customer/register';
+        else if (route === 'customer_dashboard') path = '/customer/dashboard';
+        else if (route === 'admin_login') path = '/login';
+        else if (route === 'admin_app') path = '/';
+      }
+      if (path && window.location.pathname !== path) {
+        try {
+          window.history.pushState({ route }, '', path);
+        } catch {}
+      }
+    }
+  };
+
+  // Popstate event for back/forward navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      setCurrentRoute(getInitialRoute());
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Listen for customer auth expiration
+  useEffect(() => {
+    const handleCustomerExpired = () => {
+      localStorage.removeItem('hajji_customer_token');
+      localStorage.removeItem('hajji_customer_user');
+      setCurrentCustomer(null);
+      navigateTo('customer_login');
+    };
+    window.addEventListener('hajji_customer_auth_expired', handleCustomerExpired);
+    return () => window.removeEventListener('hajji_customer_auth_expired', handleCustomerExpired);
+  }, []);
 
   // Global Dashboard Stats & Notifications
   const [dashboardData, setDashboardData] = useState<{
@@ -45,6 +121,7 @@ export default function App() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isQuickBookingOpen, setIsQuickBookingOpen] = useState(false);
+  const [pendingUsersCount, setPendingUsersCount] = useState(0);
 
   // Listen for global auth expiration events
   useEffect(() => {
@@ -84,6 +161,33 @@ export default function App() {
       });
   }, []);
 
+  // Authenticate Customer session on mount
+  useEffect(() => {
+    const custToken = localStorage.getItem('hajji_customer_token');
+    if (!custToken) return;
+
+    api
+      .getCustomerMe()
+      .then((res) => {
+        if (res.success && res.customer) {
+          setCurrentCustomer(res.customer);
+          localStorage.setItem('hajji_customer_user', JSON.stringify(res.customer));
+          if (typeof window !== 'undefined' && window.location.pathname.includes('/customer')) {
+            setCurrentRoute('customer_dashboard');
+          }
+        } else {
+          localStorage.removeItem('hajji_customer_token');
+          localStorage.removeItem('hajji_customer_user');
+          setCurrentCustomer(null);
+        }
+      })
+      .catch(() => {
+        localStorage.removeItem('hajji_customer_token');
+        localStorage.removeItem('hajji_customer_user');
+        setCurrentCustomer(null);
+      });
+  }, []);
+
   // Fetch telemetry when user is logged in
   const fetchTelemetry = async () => {
     const token = localStorage.getItem('hajji_auth_token');
@@ -93,11 +197,16 @@ export default function App() {
     }
 
     try {
-      const [dashRes, notifRes, dbRes] = await Promise.all([
+      const [dashRes, notifRes, dbRes, usersRes] = await Promise.all([
         api.getDashboardStats(),
         api.getNotifications(),
         api.getDbStatus(),
+        api.getCustomerUsers({ status: 'pending' }).catch(() => null),
       ]);
+
+      if (usersRes && usersRes.counts) {
+        setPendingUsersCount(usersRes.counts.pending || 0);
+      }
 
       if (dashRes.success) {
         setDashboardData({
@@ -180,8 +289,73 @@ export default function App() {
     );
   }
 
+  // 1. Customer Login Route
+  if (currentRoute === 'customer_login') {
+    return (
+      <CustomerLoginView
+        onLoginSuccess={(customer) => {
+          setCurrentCustomer(customer);
+          navigateTo('customer_dashboard');
+        }}
+        onNavigateToRegister={() => navigateTo('customer_register')}
+        onNavigateToAdminLogin={() => navigateTo('admin_login')}
+      />
+    );
+  }
+
+  // 2. Customer Registration Route
+  if (currentRoute === 'customer_register') {
+    return (
+      <CustomerRegisterView
+        onRegisterSuccess={(customer) => {
+          setCurrentCustomer(customer);
+          navigateTo('customer_dashboard');
+        }}
+        onNavigateToLogin={() => navigateTo('customer_login')}
+        onNavigateToAdminLogin={() => navigateTo('admin_login')}
+      />
+    );
+  }
+
+  // 3. Customer Dashboard Route
+  if (currentRoute === 'customer_dashboard') {
+    if (currentCustomer) {
+      return (
+        <CustomerDashboardView
+          customer={currentCustomer}
+          onLogout={() => {
+            api.customerLogout();
+            setCurrentCustomer(null);
+            navigateTo('customer_login');
+          }}
+        />
+      );
+    }
+    // If not authenticated as customer, fallback to Customer Login
+    return (
+      <CustomerLoginView
+        onLoginSuccess={(customer) => {
+          setCurrentCustomer(customer);
+          navigateTo('customer_dashboard');
+        }}
+        onNavigateToRegister={() => navigateTo('customer_register')}
+        onNavigateToAdminLogin={() => navigateTo('admin_login')}
+      />
+    );
+  }
+
+  // 4. Admin Login Route (when no admin user is authenticated)
   if (!currentUser) {
-    return <LoginView onLoginSuccess={handleLoginSuccess} />;
+    return (
+      <LoginView
+        onLoginSuccess={(user) => {
+          handleLoginSuccess(user);
+          navigateTo('admin_app');
+        }}
+        onNavigateToCustomerLogin={() => navigateTo('customer_login')}
+        onNavigateToCustomerRegister={() => navigateTo('customer_register')}
+      />
+    );
   }
 
   return (
@@ -195,6 +369,7 @@ export default function App() {
         dbStatus={dbStatus}
         collapsed={collapsedSidebar}
         onToggleCollapse={() => setCollapsedSidebar(!collapsedSidebar)}
+        pendingUsersCount={pendingUsersCount}
       />
 
       {/* Main Content Area */}
@@ -252,6 +427,10 @@ export default function App() {
             {currentTab === 'travel' && <TravelLogisticsView />}
 
             {currentTab === 'cms' && <CmsMediaView />}
+
+            {currentTab === 'user_management' && (
+              <UserManagementView currentUser={currentUser} />
+            )}
 
             {currentTab === 'settings' && (
               <AdminSettingsView

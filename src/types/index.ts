@@ -300,3 +300,66 @@ export interface NotificationItem {
   is_read: number;
   created_at: string;
 }
+
+export interface CustomerUser {
+  id: number;
+  customer_code: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  whatsapp?: string;
+  nationality?: string;
+  country_of_residence?: string;
+  vip_level?: string;
+  status?: 'pending' | 'active' | 'approved' | 'rejected' | 'suspended' | 'inactive';
+  assigned_role?: string | null;
+  approved_at?: string | null;
+  approved_by_name?: string | null;
+  created_at?: string;
+}
+
+export interface CustomerAccount {
+  id: number;
+  customer_code: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  whatsapp?: string;
+  nationality?: string;
+  country_of_residence?: string;
+  vip_level?: string;
+  status: 'pending' | 'active' | 'approved' | 'rejected' | 'suspended' | 'inactive';
+  assigned_role: string | null;
+  approved_at: string | null;
+  approved_by_admin_id: number | null;
+  approved_by_name: string | null;
+  rejection_reason: string | null;
+  rejected_at?: string | null;
+  suspended_at?: string | null;
+  role_updated_at?: string | null;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface AssignableRole {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface CustomerDashboardData {
+  customer: CustomerUser;
+  metrics: {
+    totalBookings: number;
+    activeBookings: number;
+    totalPaid: number;
+    passportsCount: number;
+  };
+  bookings: any[];
+  payments: any[];
+  passports: any[];
+  featuredPackages: any[];
+}
+

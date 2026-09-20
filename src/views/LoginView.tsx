@@ -1,13 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { MoonStar, Lock, User, Eye, EyeOff, AlertCircle, Mail, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { MoonStar, Lock, User, Eye, EyeOff, AlertCircle, Mail, ArrowLeft, CheckCircle2, Users } from 'lucide-react';
 import { api } from '../services/api';
 import { AdminUser } from '../types';
 
 interface LoginViewProps {
   onLoginSuccess: (user: AdminUser, token: string) => void;
+  onNavigateToCustomerLogin?: () => void;
+  onNavigateToCustomerRegister?: () => void;
 }
 
-export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
+export const LoginView: React.FC<LoginViewProps> = ({
+  onLoginSuccess,
+  onNavigateToCustomerLogin,
+  onNavigateToCustomerRegister,
+}) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -188,6 +194,33 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
               <span>Sign In to Admin Portal</span>
             )}
           </button>
+
+          {/* Customer Login Section */}
+          <div className="mt-8 pt-6 border-t border-stone-800 text-center">
+            <p className="text-xs text-stone-400 font-medium mb-3">
+              Are you a customer?
+            </p>
+            <button
+              type="button"
+              id="btn-goto-customer-login"
+              onClick={onNavigateToCustomerLogin}
+              className="w-full py-2.5 px-4 bg-stone-850 hover:bg-stone-800 text-amber-400 hover:text-amber-300 font-semibold rounded-xl text-xs border border-stone-750 hover:border-amber-500/50 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+            >
+              <Users className="w-3.5 h-3.5 text-amber-400" />
+              <span>Sign In as Customer</span>
+            </button>
+            <div className="mt-3 text-xs text-stone-400">
+              Don't have an account?{' '}
+              <button
+                type="button"
+                id="btn-goto-customer-register"
+                onClick={onNavigateToCustomerRegister}
+                className="text-amber-400 hover:text-amber-300 font-semibold underline underline-offset-2 transition-colors cursor-pointer"
+              >
+                Create Account
+              </button>
+            </div>
+          </div>
         </form>
       </div>
 

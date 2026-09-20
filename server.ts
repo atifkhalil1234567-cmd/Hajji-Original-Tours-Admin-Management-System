@@ -13,6 +13,7 @@ import financeRoutes from './server/routes/finance';
 import travelRoutes from './server/routes/travel';
 import cmsRoutes from './server/routes/cms';
 import adminRoutes from './server/routes/admin';
+import customerRoutes from './server/routes/customerAuth';
 
 // Process-level safety guards to prevent unhandled errors from terminating Node
 process.on('unhandledRejection', (reason) => {
@@ -147,6 +148,7 @@ async function startServer() {
   app.use('/api/travel', travelRoutes);
   app.use('/api/cms', cmsRoutes);
   app.use('/api/admin', adminRoutes);
+  app.use('/api/customer', customerRoutes);
 
   // Return 404 JSON for non-existent API routes before SPA fallback
   app.all('/api', (req, res) => {

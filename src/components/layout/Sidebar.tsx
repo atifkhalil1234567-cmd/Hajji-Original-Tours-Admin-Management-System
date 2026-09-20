@@ -15,6 +15,7 @@ import {
   LogOut,
   MoonStar,
   ExternalLink,
+  UserCheck,
 } from 'lucide-react';
 import { AdminUser, DatabaseStatus } from '../../types';
 
@@ -27,6 +28,7 @@ export type NavTab =
   | 'finance'
   | 'travel'
   | 'cms'
+  | 'user_management'
   | 'settings';
 
 interface SidebarProps {
@@ -37,6 +39,7 @@ interface SidebarProps {
   dbStatus: DatabaseStatus | null;
   collapsed: boolean;
   onToggleCollapse: () => void;
+  pendingUsersCount?: number;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -46,6 +49,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLogout,
   dbStatus,
   collapsed,
+  pendingUsersCount = 0,
 }) => {
   const navItems = [
     {
@@ -95,6 +99,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Website CMS & Media',
       icon: Globe,
       badge: null,
+    },
+    {
+      id: 'user_management' as NavTab,
+      label: 'User Management',
+      icon: UserCheck,
+      badge: pendingUsersCount > 0 ? `${pendingUsersCount} Pending` : null,
     },
     {
       id: 'settings' as NavTab,

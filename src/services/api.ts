@@ -1,4 +1,4 @@
-import { AdminUser, DatabaseStatus, DashboardStats, Package, Hotel, Customer, Lead, Booking, Payment, Invoice, VisaApplication, Flight, Transport, NotificationItem } from '../types';
+import { AdminUser, DatabaseStatus, DashboardStats, Package, Hotel, Customer, Lead, Booking, Payment, Invoice, VisaApplication, Flight, Transport, NotificationItem, CustomerUser, CustomerDashboardData } from '../types';
 
 // API Configuration & Base URL Resolution
 
@@ -63,11 +63,16 @@ export function getApiBaseUrl(): string {
     return normalizeApiBaseUrl(envUrl);
   }
 
-  // 3. Fallback to same-origin ONLY if running directly on the api subdomain
+  // 3. Fallback to same-origin if running directly on same host, localhost, or dev preview
   if (typeof window !== 'undefined' && window.location?.origin) {
     const origin = window.location.origin;
-    if (origin.includes('api.hajjioriginaltours.com')) {
-      return normalizeApiBaseUrl(origin);
+    if (
+      origin.includes('api.hajjioriginaltours.com') ||
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.location.hostname.includes('run.app')
+    ) {
+      return '';
     }
   }
 
@@ -115,7 +120,11 @@ export function setCustomBaseUrl(url: string | null): void {
   }
 }
 
-function getAuthHeader(): Record<string, string> {
+function getAuthHeader(endpoint?: string): Record<string, string> {
+  if (endpoint && (endpoint.startsWith('/customer') || endpoint.startsWith('customer'))) {
+    const custToken = localStorage.getItem('hajji_customer_token');
+    return custToken ? { Authorization: `Bearer ${custToken}` } : {};
+  }
   const token = localStorage.getItem('hajji_auth_token');
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -134,7 +143,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   const headers: Record<string, string> = {
     'Accept': 'application/json',
     'Content-Type': 'application/json',
-    ...getAuthHeader(),
+    ...getAuthHeader(endpoint),
     ...(options.headers as any),
   };
 
@@ -184,13 +193,21 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   const status = response.status;
   const isHtml = contentType.includes('text/html') || responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html');
 
-  // HTTP 401: Invalid username/password or expired session
+  // HTTP 401: Invalid credentials or expired session
   if (status === 401) {
-    localStorage.removeItem('hajji_auth_token');
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('hajji_auth_expired', { detail: data?.message }));
+    const isCustomerReq = endpoint.startsWith('/customer') || endpoint.startsWith('customer');
+    if (isCustomerReq) {
+      localStorage.removeItem('hajji_customer_token');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('hajji_customer_auth_expired', { detail: data?.message }));
+      }
+    } else {
+      localStorage.removeItem('hajji_auth_token');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('hajji_auth_expired', { detail: data?.message }));
+      }
     }
-    const message = data?.message || 'Invalid username or password. Please verify your admin credentials.';
+    const message = data?.message || (isCustomerReq ? 'Invalid customer credentials. Please check your email and password.' : 'Invalid username or password. Please verify your admin credentials.');
     const error: ApiError = new Error(message);
     error.status = 401;
     error.statusText = response.statusText;
@@ -509,4 +526,66 @@ export const api = {
     method: 'POST',
   }),
   getDbStatus: () => request<{ success: boolean; status: DatabaseStatus }>('/admin/db-status'),
+
+  // Admin User Management (Customer Approval & Role Assignment)
+  getCustomerUsers: (params?: { status?: string; search?: string }) => {
+    const query = new URLSearchParams(params as any).toString();
+    return request<{
+      success: boolean;
+      counts: { total: number; pending: number; active: number; rejected: number; suspended: number };
+      users: any[];
+    }>(`/admin/customer-users${query ? `?${query}` : ''}`);
+  },
+  getAssignableRoles: () =>
+    request<{ success: boolean; roles: { id: string; name: string; description: string }[] }>('/admin/roles-list'),
+  approveCustomerUser: (id: number | string, role: string) =>
+    request<{ success: boolean; message: string; user: any }>(`/admin/customer-users/${id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ role }),
+    }),
+  rejectCustomerUser: (id: number | string, reason?: string) =>
+    request<{ success: boolean; message: string; user: any }>(`/admin/customer-users/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+  updateCustomerUserRole: (id: number | string, role: string) =>
+    request<{ success: boolean; message: string; user: any }>(`/admin/customer-users/${id}/role`, {
+      method: 'POST',
+      body: JSON.stringify({ role }),
+    }),
+  suspendCustomerUser: (id: number | string) =>
+    request<{ success: boolean; message: string; user: any }>(`/admin/customer-users/${id}/suspend`, {
+      method: 'POST',
+    }),
+  reactivateCustomerUser: (id: number | string) =>
+    request<{ success: boolean; message: string; user: any }>(`/admin/customer-users/${id}/reactivate`, {
+      method: 'POST',
+    }),
+  getCustomerUserAudit: (id: number | string) =>
+    request<{ success: boolean; logs: any[] }>(`/admin/customer-users/${id}/audit`),
+
+  // Customer Portal Authentication & Dashboard
+  customerLogin: (credentials: { email: string; password: string }) =>
+    request<{ success: boolean; token: string; customer: CustomerUser; message?: string }>('/customer/login', {
+      method: 'POST',
+      body: JSON.stringify(credentials),
+    }),
+  customerRegister: (data: { fullName: string; email: string; phone?: string; password: string }) =>
+    request<{ success: boolean; pendingApproval?: boolean; status?: string; token?: string; customer: CustomerUser; message?: string }>('/customer/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  customerForgotPassword: (data: { email: string }) =>
+    request<{ success: boolean; message: string }>('/customer/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  getCustomerMe: () =>
+    request<{ success: boolean; customer: CustomerUser }>('/customer/me'),
+  getCustomerDashboard: () =>
+    request<{ success: boolean; data: CustomerDashboardData }>('/customer/dashboard'),
+  customerLogout: () => {
+    localStorage.removeItem('hajji_customer_token');
+    localStorage.removeItem('hajji_customer_user');
+  },
 };

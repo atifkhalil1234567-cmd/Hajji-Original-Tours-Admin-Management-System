@@ -67,6 +67,32 @@ export async function initDatabase(): Promise<DbStatus> {
         }
 
         console.log(`[DB] Successfully connected to Hostinger MySQL at ${host}:${port}/${database} (${tablesCount} tables).`);
+
+        // Ensure customer approval columns exist in MySQL if needed
+        try {
+          const mysqlCustomerCols = [
+            "ALTER TABLE `customers` ADD COLUMN `assigned_role` VARCHAR(60) NULL DEFAULT NULL",
+            "ALTER TABLE `customers` ADD COLUMN `approved_at` DATETIME NULL DEFAULT NULL",
+            "ALTER TABLE `customers` ADD COLUMN `approved_by_admin_id` INT UNSIGNED NULL DEFAULT NULL",
+            "ALTER TABLE `customers` ADD COLUMN `rejection_reason` TEXT NULL DEFAULT NULL",
+            "ALTER TABLE `customers` ADD COLUMN `rejected_at` DATETIME NULL DEFAULT NULL",
+            "ALTER TABLE `customers` ADD COLUMN `rejected_by_admin_id` INT UNSIGNED NULL DEFAULT NULL",
+            "ALTER TABLE `customers` ADD COLUMN `suspended_at` DATETIME NULL DEFAULT NULL",
+            "ALTER TABLE `customers` ADD COLUMN `suspended_by_admin_id` INT UNSIGNED NULL DEFAULT NULL",
+            "ALTER TABLE `customers` ADD COLUMN `role_updated_at` DATETIME NULL DEFAULT NULL",
+            "ALTER TABLE `customers` ADD COLUMN `role_updated_by_admin_id` INT UNSIGNED NULL DEFAULT NULL",
+          ];
+          for (const sql of mysqlCustomerCols) {
+            try {
+              await pool.query(sql);
+            } catch {}
+          }
+          // Modify status ENUM if needed
+          try {
+            await pool.query("ALTER TABLE `customers` MODIFY COLUMN `status` ENUM('pending', 'active', 'approved', 'rejected', 'suspended', 'inactive', 'archived') DEFAULT 'pending'");
+          } catch {}
+        } catch {}
+
         return {
           connected: true,
           engine: 'mysql',
@@ -147,6 +173,30 @@ export async function initDatabase(): Promise<DbStatus> {
           sqliteDb.run("INSERT OR IGNORE INTO hotel_facilities (name, icon) VALUES (?, ?);", [name, icon]);
         }
       }
+
+      // Ensure customer approval & role assignment workflow columns exist
+      const customerCols = [
+        "ALTER TABLE customers ADD COLUMN assigned_role TEXT DEFAULT NULL;",
+        "ALTER TABLE customers ADD COLUMN approved_at TEXT DEFAULT NULL;",
+        "ALTER TABLE customers ADD COLUMN approved_by_admin_id INTEGER DEFAULT NULL;",
+        "ALTER TABLE customers ADD COLUMN rejection_reason TEXT DEFAULT NULL;",
+        "ALTER TABLE customers ADD COLUMN rejected_at TEXT DEFAULT NULL;",
+        "ALTER TABLE customers ADD COLUMN rejected_by_admin_id INTEGER DEFAULT NULL;",
+        "ALTER TABLE customers ADD COLUMN suspended_at TEXT DEFAULT NULL;",
+        "ALTER TABLE customers ADD COLUMN suspended_by_admin_id INTEGER DEFAULT NULL;",
+        "ALTER TABLE customers ADD COLUMN role_updated_at TEXT DEFAULT NULL;",
+        "ALTER TABLE customers ADD COLUMN role_updated_by_admin_id INTEGER DEFAULT NULL;",
+      ];
+      for (const colSql of customerCols) {
+        try {
+          sqliteDb.run(colSql);
+        } catch {
+          // Column already exists
+        }
+      }
+
+      // Ensure existing active seed customers have assigned_role set if null
+      sqliteDb.run("UPDATE customers SET assigned_role = 'Customer', approved_at = '2026-01-01 00:00:00', approved_by_admin_id = 1 WHERE (assigned_role IS NULL OR assigned_role = '') AND (status = 'active' OR status = 'approved');");
 
       saveSqliteToFile();
     } catch (migErr) {

@@ -14,11 +14,13 @@ import {
   FileCode,
   Building2,
   Clock,
+  UserCheck,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { AdminUser, DatabaseStatus } from '../types';
 import { Badge } from '../components/common/Badge';
 import { Modal } from '../components/common/Modal';
+import { UserManagementView } from './UserManagementView';
 
 interface AdminSettingsViewProps {
   currentUser: AdminUser;
@@ -29,7 +31,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   currentUser,
   dbStatus,
 }) => {
-  const [activeTab, setActiveTab] = useState<'database' | 'admins' | 'rbac' | 'settings' | 'audit'>('database');
+  const [activeTab, setActiveTab] = useState<'database' | 'admins' | 'user_management' | 'rbac' | 'settings' | 'audit'>('database');
   const [admins, setAdmins] = useState<any[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
   const [permissions, setPermissions] = useState<any[]>([]);
@@ -199,6 +201,18 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
         >
           <Users className="w-3.5 h-3.5" />
           <span>Staff Accounts ({admins.length})</span>
+        </button>
+        <button
+          id="btn-tab-user-mgmt"
+          onClick={() => setActiveTab('user_management')}
+          className={`px-4 py-1.5 rounded-xl text-xs font-semibold transition-colors flex items-center gap-2 ${
+            activeTab === 'user_management'
+              ? 'bg-amber-500 text-stone-950 font-bold'
+              : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+          }`}
+        >
+          <UserCheck className="w-3.5 h-3.5" />
+          <span>User Management & Approvals</span>
         </button>
         <button
           onClick={() => setActiveTab('rbac')}
@@ -414,6 +428,11 @@ JWT_SECRET=super_secure_hajji_jwt_key_1447`}
             </div>
           </div>
         </div>
+      )}
+
+      {/* Tab: Customer User Management & Approvals */}
+      {activeTab === 'user_management' && (
+        <UserManagementView currentUser={currentUser} />
       )}
 
       {/* Tab 3: RBAC Matrix */}
