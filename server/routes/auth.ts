@@ -22,7 +22,7 @@ router.get('/diagnostic', async (req: Request, res: Response) => {
       adminCount = Number(countRes[0]?.cnt || 0);
 
       const superCheck = await dbQuery(
-        `SELECT id, username, email, status, role_id FROM admins WHERE username = 'superadmin' OR email = 'admin@hajjioriginal.com' LIMIT 1`
+        `SELECT id, username, email, status, role_id FROM admins WHERE username = 'superadmin' OR email = 'admin@hajjioriginal.com' OR email = 'admin@hajjioriginaltours.com' LIMIT 1`
       );
       if (superCheck.length > 0) {
         superadminFound = true;
@@ -88,7 +88,14 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
         `SELECT a.*, r.slug as role_slug, r.name as role_name
          FROM admins a
          LEFT JOIN admin_roles r ON a.role_id = r.id
-         WHERE (LOWER(a.username) = LOWER(?) OR LOWER(a.email) = LOWER(?) OR (a.username = 'superadmin' AND LOWER(?) = 'admin'))
+         WHERE (
+           LOWER(a.username) = LOWER(?)
+           OR LOWER(a.email) = LOWER(?)
+           OR (
+             (a.username = 'superadmin' OR a.id = 1)
+             AND LOWER(?) IN ('admin', 'superadmin', 'admin@hajjioriginal.com', 'admin@hajjioriginaltours.com', 'atif', 'atifkhalil', 'atif khalil', 'atifkhalil1234567@gmail.com')
+           )
+         )
            AND a.deleted_at IS NULL
          LIMIT 1`,
         [cleanUsername, cleanUsername, cleanUsername]
@@ -168,27 +175,12 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Password verification: Validate bcrypt hash securely
+    // Password verification: Validate submitted password against stored hash using bcrypt
     let isValid = false;
     const storedPassword = String(admin.password || '');
 
     if (storedPassword.startsWith('$2a$') || storedPassword.startsWith('$2b$') || storedPassword.startsWith('$2y$')) {
       isValid = await bcrypt.compare(password, storedPassword);
-    } else if (storedPassword) {
-      // Legacy plain text match
-      isValid = (password === storedPassword);
-    }
-
-    // Fallback: If this is the superadmin and demo password 'admin123' or 'password123' was used, allow and upgrade hash
-    if (!isValid && (admin.username === 'superadmin' || admin.id === 1) && (password === 'admin123' || password === 'password123')) {
-      isValid = true;
-      try {
-        const newHash = await bcrypt.hash(password, 10);
-        await dbRun(`UPDATE admins SET password = ? WHERE id = ?`, [newHash, admin.id]);
-        console.log(`[Auth] Automatically upgraded superadmin password hash to bcrypt.`);
-      } catch (upErr: any) {
-        console.warn('[Auth] Hash upgrade notice:', upErr.message);
-      }
     }
 
     if (!isValid) {

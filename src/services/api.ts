@@ -66,11 +66,18 @@ export function getApiBaseUrl(): string {
   // 3. Fallback to same-origin if running directly on same host, localhost, or dev preview
   if (typeof window !== 'undefined' && window.location?.origin) {
     const origin = window.location.origin;
+    const hostname = window.location.hostname;
     if (
       origin.includes('api.hajjioriginaltours.com') ||
-      window.location.hostname === 'localhost' ||
-      window.location.hostname === '127.0.0.1' ||
-      window.location.hostname.includes('run.app')
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname.includes('run.app') ||
+      hostname.includes('googleusercontent.com') ||
+      hostname.includes('aistudio') ||
+      hostname.includes('web.app') ||
+      hostname.includes('firebaseapp.com') ||
+      hostname.includes('cloudshell.dev') ||
+      window.location.port === '3000'
     ) {
       return '';
     }

@@ -49,10 +49,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
         localStorage.setItem('hajji_auth_token', res.token);
         onLoginSuccess(res.user, res.token);
       } else {
-        setError('Invalid username/email or password.');
+        setError(res.message || 'Invalid username/email or password.');
       }
-    } catch {
-      setError('Invalid username/email or password.');
+    } catch (err: any) {
+      setError(err?.message || 'Invalid username/email or password.');
     } finally {
       setLoading(false);
     }
@@ -136,7 +136,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 onChange={(e) => setUsername(e.target.value)}
                 required
                 className="w-full pl-10 pr-4 py-2.5 bg-stone-800/80 border border-stone-700/80 rounded-xl text-sm text-stone-100 placeholder-stone-500 focus:outline-hidden focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 transition-colors"
-                placeholder="Enter your username or email"
+                placeholder="e.g. superadmin, admin, or staff email"
                 autoComplete="username"
               />
             </div>
