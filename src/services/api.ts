@@ -45,11 +45,16 @@ export function getRawViteApiBaseUrl(): string {
  * 4. Production Hostinger backend base URL: https://api.hajjioriginaltours.com
  */
 export function getApiBaseUrl(): string {
-  // 1. Runtime override in localStorage (allows interactive testing, purges any stale Vercel or old myc domains)
+  // 1. Runtime override in localStorage (allows interactive testing, purges any forbidden domains)
   if (typeof window !== 'undefined') {
     const custom = localStorage.getItem('hajji_custom_api_url');
     if (custom && custom.trim()) {
-      if (custom.includes('vercel.app') || custom.includes('myc.hajjioriginaltours.com')) {
+      const isForbidden =
+        custom.includes('vercel.app') ||
+        custom.includes('myc.hajjioriginaltours.com') ||
+        custom.includes('localhost') ||
+        custom.includes('run.app');
+      if (isForbidden) {
         localStorage.removeItem('hajji_custom_api_url');
       } else {
         return normalizeApiBaseUrl(custom);
@@ -57,21 +62,21 @@ export function getApiBaseUrl(): string {
     }
   }
 
-  // 2. Optional environment variable override: VITE_API_BASE_URL (excluding stale Vercel or old myc URLs)
+  // 2. Optional environment variable override: VITE_API_BASE_URL (excluding forbidden URLs)
   const envUrl = (import.meta as any).env?.VITE_API_BASE_URL;
-  if (envUrl && typeof envUrl === 'string' && envUrl.trim() && !envUrl.includes('vercel.app') && !envUrl.includes('myc.hajjioriginaltours.com')) {
+  if (
+    envUrl &&
+    typeof envUrl === 'string' &&
+    envUrl.trim() &&
+    !envUrl.includes('vercel.app') &&
+    !envUrl.includes('myc.hajjioriginaltours.com') &&
+    !envUrl.includes('localhost') &&
+    !envUrl.includes('run.app')
+  ) {
     return normalizeApiBaseUrl(envUrl);
   }
 
-  // 3. Fallback to same-origin ONLY if running directly on the api backend subdomain
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    const origin = window.location.origin;
-    if (origin.includes('api.hajjioriginaltours.com')) {
-      return '';
-    }
-  }
-
-  // 4. Default to Hostinger production backend
+  // 3. Strict production backend URL: always https://api.hajjioriginaltours.com
   return PRODUCTION_API_BASE_URL;
 }
 
@@ -116,6 +121,17 @@ export function setCustomBaseUrl(url: string | null): void {
 }
 
 function getAuthHeader(endpoint?: string): Record<string, string> {
+  // Never attach Authorization header to public unauthenticated endpoints (prevents spurious preflight failures)
+  if (
+    endpoint &&
+    (endpoint.includes('/login') ||
+      endpoint.includes('/register') ||
+      endpoint.includes('/forgot-password') ||
+      endpoint.includes('/health') ||
+      endpoint.includes('/diagnostic'))
+  ) {
+    return {};
+  }
   if (endpoint && (endpoint.startsWith('/customer') || endpoint.startsWith('customer'))) {
     const custToken = localStorage.getItem('hajji_customer_token');
     return custToken ? { Authorization: `Bearer ${custToken}` } : {};
@@ -149,10 +165,16 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   let response: Response;
   try {
-    response = await fetch(url, { ...options, headers });
+    response = await fetch(url, {
+      mode: 'cors',
+      ...options,
+      headers,
+    });
   } catch (netErr: any) {
+    console.error(`[API Fetch Error on ${options.method || 'GET'} ${url}]:`, netErr);
+    const detailMsg = netErr?.message ? ` (${netErr.message})` : '';
     const err: ApiError = new Error(
-      `Network Connection Error: The frontend cannot connect to the backend at "${url}". Please verify your backend server is running and accessible.`
+      `Network Connection Error: The frontend cannot connect to the backend at "${url}". Please verify your backend server is running and accessible.${detailMsg}`
     );
     err.status = 0;
     err.statusText = 'Network Error';

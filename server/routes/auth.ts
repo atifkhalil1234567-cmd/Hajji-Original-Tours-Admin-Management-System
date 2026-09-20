@@ -5,6 +5,48 @@ import { generateToken, authenticate, logActivity, AuthRequest } from '../middle
 
 const router = Router();
 
+// In-memory circular buffer for safe auth request logging (NEVER logs passwords or tokens)
+export interface SafeAuthLog {
+  timestamp: string;
+  method: string;
+  path: string;
+  origin: string;
+  ip: string;
+  identifier?: string;
+  status: number;
+  message?: string;
+}
+
+const safeAuthLogs: SafeAuthLog[] = [];
+
+export function recordAuthLog(entry: SafeAuthLog): void {
+  safeAuthLogs.unshift(entry);
+  if (safeAuthLogs.length > 30) {
+    safeAuthLogs.pop();
+  }
+}
+
+export function getSafeAuthLogs(): SafeAuthLog[] {
+  return [...safeAuthLogs];
+}
+
+// Explicit OPTIONS handler for /login preflights
+router.options('/login', (req: Request, res: Response): void => {
+  const origin = (req.headers.origin as string) || 'none';
+  const ip = req.ip || req.socket?.remoteAddress || '127.0.0.1';
+  console.log(`[Auth Login Preflight] OPTIONS /api/auth/login from Origin: "${origin}", IP: ${ip}`);
+  recordAuthLog({
+    timestamp: new Date().toISOString(),
+    method: 'OPTIONS',
+    path: '/api/auth/login',
+    origin,
+    ip,
+    status: 204,
+    message: 'Preflight OK',
+  });
+  res.status(204).end();
+});
+
 // 1. Diagnostic endpoint for Hostinger verification (safe, zero credentials exposed)
 router.get('/diagnostic', async (req: Request, res: Response) => {
   try {
@@ -56,6 +98,7 @@ router.get('/diagnostic', async (req: Request, res: Response) => {
         port: process.env.PORT || 3000,
         corsEnabled: true,
       },
+      recentAuthLogs: getSafeAuthLogs(),
     });
   } catch (err: any) {
     res.status(500).json({
@@ -68,18 +111,30 @@ router.get('/diagnostic', async (req: Request, res: Response) => {
 
 // 2. Main Login Endpoint
 router.post('/login', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { username, password } = req.body || {};
-    const ip = req.ip || req.socket?.remoteAddress || '127.0.0.1';
-    const ua = (req.headers['user-agent'] as string) || '';
+  const ip = req.ip || req.socket?.remoteAddress || '127.0.0.1';
+  const origin = (req.headers.origin as string) || 'none';
+  const ua = (req.headers['user-agent'] as string) || '';
+  const { username, password } = req.body || {};
+  const cleanUsername = username ? String(username).trim() : '';
 
+  console.log(`[Auth Login Request] POST /api/auth/login - Identifier: "${cleanUsername || 'empty'}" - Origin: "${origin}" - IP: ${ip}`);
+
+  try {
     if (!username || !password) {
+      recordAuthLog({
+        timestamp: new Date().toISOString(),
+        method: 'POST',
+        path: '/api/auth/login',
+        origin,
+        ip,
+        identifier: cleanUsername || undefined,
+        status: 400,
+        message: 'Missing username or password',
+      });
+      console.log(`[Auth Login Response] POST /api/auth/login -> Status 400 (Missing fields)`);
       res.status(400).json({ success: false, message: 'Username and password are required' });
       return;
     }
-
-    const cleanUsername = String(username).trim();
-    console.log(`[Auth] Inbound login attempt for identifier: "${cleanUsername}" from IP: ${ip}`);
 
     // Query admin using LEFT JOIN so missing admin_roles row won't block authentication
     let admins: any[] = [];
@@ -150,7 +205,17 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     }
 
     if (admins.length === 0) {
-      console.warn(`[Auth] Failed login: User not found for identifier "${cleanUsername}"`);
+      console.warn(`[Auth Login Response] POST /api/auth/login -> Status 401 (User not found for identifier "${cleanUsername}")`);
+      recordAuthLog({
+        timestamp: new Date().toISOString(),
+        method: 'POST',
+        path: '/api/auth/login',
+        origin,
+        ip,
+        identifier: cleanUsername,
+        status: 401,
+        message: 'User not found',
+      });
       try {
         await dbRun(
           `INSERT INTO login_attempts (username_or_email, ip_address, user_agent, status) VALUES (?, ?, ?, 'failed')`,
@@ -164,7 +229,17 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     const admin = admins[0];
 
     if (admin.status !== 'active') {
-      console.warn(`[Auth] Blocked login: Account status "${admin.status}" for "${admin.username}"`);
+      console.warn(`[Auth Login Response] POST /api/auth/login -> Status 403 (Account status "${admin.status}" for "${admin.username}")`);
+      recordAuthLog({
+        timestamp: new Date().toISOString(),
+        method: 'POST',
+        path: '/api/auth/login',
+        origin,
+        ip,
+        identifier: cleanUsername,
+        status: 403,
+        message: `Account status: ${admin.status}`,
+      });
       try {
         await dbRun(
           `INSERT INTO login_attempts (username_or_email, ip_address, user_agent, status) VALUES (?, ?, ?, 'blocked')`,
@@ -184,7 +259,17 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     }
 
     if (!isValid) {
-      console.warn(`[Auth] Failed login: Password mismatch for admin "${admin.username}"`);
+      console.warn(`[Auth Login Response] POST /api/auth/login -> Status 401 (Password mismatch for admin "${admin.username}")`);
+      recordAuthLog({
+        timestamp: new Date().toISOString(),
+        method: 'POST',
+        path: '/api/auth/login',
+        origin,
+        ip,
+        identifier: cleanUsername,
+        status: 401,
+        message: 'Password mismatch',
+      });
       try {
         await dbRun(`UPDATE admins SET failed_login_count = failed_login_count + 1 WHERE id = ?`, [admin.id]);
         await dbRun(
@@ -252,7 +337,17 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     };
 
     const token = generateToken(userPayload);
-    console.log(`[Auth] Success: Admin "${admin.username}" (${admin.email}) logged in successfully.`);
+    console.log(`[Auth Login Response] POST /api/auth/login -> Status 200 (Success for "${admin.username}", Role: ${admin.role_name || admin.role_slug})`);
+    recordAuthLog({
+      timestamp: new Date().toISOString(),
+      method: 'POST',
+      path: '/api/auth/login',
+      origin,
+      ip,
+      identifier: cleanUsername,
+      status: 200,
+      message: 'Login successful',
+    });
 
     try {
       await logActivity(admin.id, 'auth', 'login', admin.id, `Admin ${admin.username} logged in successfully.`, req);
@@ -266,6 +361,16 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     });
   } catch (err: any) {
     console.error('[Auth Error]', err.message, err.stack);
+    recordAuthLog({
+      timestamp: new Date().toISOString(),
+      method: 'POST',
+      path: '/api/auth/login',
+      origin,
+      ip,
+      identifier: cleanUsername || undefined,
+      status: 500,
+      message: `Server error: ${err.message}`,
+    });
     res.status(500).json({
       success: false,
       message: `Authentication failed: ${err.message || 'Server error'}`,

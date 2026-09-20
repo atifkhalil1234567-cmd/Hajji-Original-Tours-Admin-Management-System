@@ -45,7 +45,7 @@ async function startServer() {
       let isAllowed = false;
 
       if (configuredCorsOrigins.length === 0) {
-        // By default, allow incoming web origin (e.g. Vercel deployment, custom domain, or localhost)
+        // By default, allow incoming web origin
         isAllowed = true;
       } else {
         isAllowed = configuredCorsOrigins.some((allowed) => {
@@ -66,18 +66,43 @@ async function startServer() {
       }
 
       if (isAllowed) {
-        // Set the specific allowed origin (never '*' when credentials are used)
-        res.setHeader('Access-Control-Allow-Origin', origin);
-        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        if (origin === 'null') {
+          // Sandboxed iframes or privacy mode: CORS spec forbids credentials with null
+          res.setHeader('Access-Control-Allow-Origin', '*');
+        } else {
+          res.setHeader('Access-Control-Allow-Origin', origin);
+          res.setHeader('Access-Control-Allow-Credentials', 'true');
+        }
       }
+    } else {
+      // Direct or server-side requests without Origin header
+      res.setHeader('Access-Control-Allow-Origin', '*');
     }
 
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Refreshed-Token');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
+
+    // Dynamically allow requested headers from the browser preflight, plus standard headers
+    const reqHeaders = req.headers['access-control-request-headers'];
+    if (reqHeaders && typeof reqHeaders === 'string') {
+      res.setHeader('Access-Control-Allow-Headers', reqHeaders);
+    } else {
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Refreshed-Token, Access-Control-Request-Method, Access-Control-Request-Headers'
+      );
+    }
+
     res.setHeader('Access-Control-Expose-Headers', 'X-Refreshed-Token');
+    res.setHeader('Access-Control-Max-Age', '86400');
+
+    // Safe server-side logging for incoming requests to /api/auth routes
+    if (req.originalUrl?.includes('/auth/') || req.url?.includes('/auth/')) {
+      const clientIp = req.ip || req.socket?.remoteAddress || '127.0.0.1';
+      console.log(`[HTTP ${req.method}] ${req.originalUrl || req.url} - Origin: "${origin || 'none'}" - IP: ${clientIp}`);
+    }
 
     if (req.method === 'OPTIONS') {
-      res.sendStatus(204);
+      res.status(204).end();
       return;
     }
     next();
