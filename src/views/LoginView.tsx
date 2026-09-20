@@ -75,7 +75,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-stone-950 flex flex-col justify-center items-center p-4 relative overflow-hidden">
+    <div className="min-h-screen bg-stone-950 flex flex-col justify-center items-center p-4 sm:p-6 relative overflow-y-auto">
       {/* Background Subtle Ambient Glows */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[450px] bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 right-10 w-[450px] h-[350px] bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
@@ -83,12 +83,12 @@ export const LoginView: React.FC<LoginViewProps> = ({
       {/* Main Login Card */}
       <div
         id="login-card"
-        className="w-full max-w-md bg-stone-900/90 border border-stone-800 rounded-3xl p-8 sm:p-10 shadow-2xl backdrop-blur-md relative z-10 text-stone-100"
+        className="w-full max-w-md bg-stone-900/95 border border-stone-800 rounded-3xl p-6 sm:p-8 shadow-2xl backdrop-blur-md relative z-10 text-stone-100 my-auto"
       >
         {/* Brand Header */}
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-stone-950 mx-auto shadow-xl shadow-amber-500/20 mb-4">
-            <MoonStar className="w-9 h-9 text-stone-950 stroke-[2.2]" />
+        <div className="text-center mb-6">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-stone-950 mx-auto shadow-xl shadow-amber-500/20 mb-3">
+            <MoonStar className="w-8 h-8 text-stone-950 stroke-[2.2]" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-white">
             Hajji Original Tours
@@ -186,7 +186,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
             id="btn-submit-login"
             type="submit"
             disabled={loading}
-            className="w-full py-3 px-4 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold rounded-xl text-sm shadow-lg shadow-amber-500/20 transition-colors flex items-center justify-center gap-2 mt-6 cursor-pointer disabled:opacity-50"
+            className="w-full py-3 px-4 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold rounded-xl text-sm shadow-lg shadow-amber-500/20 transition-colors flex items-center justify-center gap-2 mt-5 cursor-pointer disabled:opacity-50"
           >
             {loading ? (
               <span>Signing In...</span>
@@ -195,27 +195,42 @@ export const LoginView: React.FC<LoginViewProps> = ({
             )}
           </button>
 
-          {/* Customer Login Section */}
-          <div className="mt-8 pt-6 border-t border-stone-800 text-center">
-            <p className="text-xs text-stone-400 font-medium mb-3">
+          {/* Customer / Pilgrim Authentication Options Section */}
+          <div
+            id="customer-login-section"
+            className="mt-6 pt-5 border-t border-stone-800 text-center"
+          >
+            <p className="text-xs font-semibold text-stone-300 mb-2.5">
               Are you a customer?
             </p>
             <button
               type="button"
               id="btn-goto-customer-login"
-              onClick={onNavigateToCustomerLogin}
-              className="w-full py-2.5 px-4 bg-stone-850 hover:bg-stone-800 text-amber-400 hover:text-amber-300 font-semibold rounded-xl text-xs border border-stone-750 hover:border-amber-500/50 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+              onClick={() => {
+                if (onNavigateToCustomerLogin) {
+                  onNavigateToCustomerLogin();
+                } else {
+                  window.location.href = '/customer/login';
+                }
+              }}
+              className="w-full py-2.5 px-4 bg-stone-800 hover:bg-stone-700 text-amber-400 hover:text-amber-300 font-bold rounded-xl text-xs border border-stone-700 hover:border-amber-500/50 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
             >
-              <Users className="w-3.5 h-3.5 text-amber-400" />
+              <Users className="w-4 h-4 text-amber-400 shrink-0" />
               <span>Sign In as Customer</span>
             </button>
             <div className="mt-3 text-xs text-stone-400">
-              Don't have an account?{' '}
+              <span>Don't have an account? </span>
               <button
                 type="button"
                 id="btn-goto-customer-register"
-                onClick={onNavigateToCustomerRegister}
-                className="text-amber-400 hover:text-amber-300 font-semibold underline underline-offset-2 transition-colors cursor-pointer"
+                onClick={() => {
+                  if (onNavigateToCustomerRegister) {
+                    onNavigateToCustomerRegister();
+                  } else {
+                    window.location.href = '/customer/register';
+                  }
+                }}
+                className="text-amber-400 hover:text-amber-300 font-bold underline underline-offset-2 transition-colors cursor-pointer ml-1 inline-block"
               >
                 Create Account
               </button>
