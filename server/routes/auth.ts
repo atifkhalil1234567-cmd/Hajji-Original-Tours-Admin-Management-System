@@ -32,8 +32,17 @@ export function getSafeAuthLogs(): SafeAuthLog[] {
 
 // Explicit OPTIONS handler for /login preflights
 router.options('/login', (req: Request, res: Response): void => {
-  const origin = (req.headers.origin as string) || 'none';
+  const origin = (req.headers.origin as string) || 'https://hajjioriginaltours.com';
   const ip = req.ip || req.socket?.remoteAddress || '127.0.0.1';
+
+  res.setHeader('Access-Control-Allow-Origin', origin === 'null' ? '*' : origin);
+  if (origin !== 'null') {
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Max-Age', '86400');
+
   console.log(`[Auth Login Preflight] OPTIONS /api/auth/login from Origin: "${origin}", IP: ${ip}`);
   recordAuthLog({
     timestamp: new Date().toISOString(),

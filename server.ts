@@ -29,14 +29,20 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
   const HOST = '0.0.0.0';
 
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-  // CORS and Security Headers
+  // 1. CORS and Security Headers Middleware (Mounted FIRST before body parsers and routes)
   const configuredCorsOrigins = (process.env.CORS_ORIGIN || '')
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
+
+  const KNOWN_ALLOWED_ORIGINS = new Set([
+    'https://hajjioriginaltours.com',
+    'http://hajjioriginaltours.com',
+    'https://www.hajjioriginaltours.com',
+    'http://www.hajjioriginaltours.com',
+    'https://admin.hajjioriginaltours.com',
+    'https://api.hajjioriginaltours.com',
+  ]);
 
   app.use((req, res, next) => {
     const origin = req.headers.origin;
@@ -44,30 +50,44 @@ async function startServer() {
     if (origin && typeof origin === 'string') {
       let isAllowed = false;
 
-      if (configuredCorsOrigins.length === 0) {
-        // By default, allow incoming web origin
+      // Unconditionally allow exact production frontend origins
+      if (KNOWN_ALLOWED_ORIGINS.has(origin)) {
         isAllowed = true;
       } else {
-        isAllowed = configuredCorsOrigins.some((allowed) => {
-          if (allowed === '*' || allowed === origin) return true;
-          // Support wildcard subdomain matching like *.vercel.app or https://*.vercel.app
-          const cleanAllowed = allowed.replace(/^https?:\/\//, '');
-          if (cleanAllowed.startsWith('*.')) {
-            const rootDomain = cleanAllowed.slice(2);
-            try {
-              const originHost = new URL(origin).hostname;
-              return originHost === rootDomain || originHost.endsWith(`.${rootDomain}`);
-            } catch {
-              return false;
-            }
+        try {
+          const originHost = new URL(origin).hostname;
+          if (originHost === 'hajjioriginaltours.com' || originHost.endsWith('.hajjioriginaltours.com')) {
+            isAllowed = true;
           }
-          return false;
-        });
+        } catch {
+          // ignore parsing error
+        }
+      }
+
+      // Check env-configured CORS origins or default to true if none configured
+      if (!isAllowed) {
+        if (configuredCorsOrigins.length === 0) {
+          isAllowed = true;
+        } else {
+          isAllowed = configuredCorsOrigins.some((allowed) => {
+            if (allowed === '*' || allowed === origin) return true;
+            const cleanAllowed = allowed.replace(/^https?:\/\//, '');
+            if (cleanAllowed.startsWith('*.')) {
+              const rootDomain = cleanAllowed.slice(2);
+              try {
+                const originHost = new URL(origin).hostname;
+                return originHost === rootDomain || originHost.endsWith(`.${rootDomain}`);
+              } catch {
+                return false;
+              }
+            }
+            return false;
+          });
+        }
       }
 
       if (isAllowed) {
         if (origin === 'null') {
-          // Sandboxed iframes or privacy mode: CORS spec forbids credentials with null
           res.setHeader('Access-Control-Allow-Origin', '*');
         } else {
           res.setHeader('Access-Control-Allow-Origin', origin);
@@ -76,19 +96,22 @@ async function startServer() {
       }
     } else {
       // Direct or server-side requests without Origin header
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Origin', 'https://hajjioriginaltours.com');
     }
 
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
 
-    // Dynamically allow requested headers from the browser preflight, plus standard headers
+    // Dynamically allow requested headers from the browser preflight, ensuring Content-Type and Authorization are always included
     const reqHeaders = req.headers['access-control-request-headers'];
     if (reqHeaders && typeof reqHeaders === 'string') {
-      res.setHeader('Access-Control-Allow-Headers', reqHeaders);
+      const headerSet = new Set(reqHeaders.split(',').map((h) => h.trim()));
+      headerSet.add('Content-Type');
+      headerSet.add('Authorization');
+      res.setHeader('Access-Control-Allow-Headers', Array.from(headerSet).join(', '));
     } else {
       res.setHeader(
         'Access-Control-Allow-Headers',
-        'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Refreshed-Token, Access-Control-Request-Method, Access-Control-Request-Headers'
+        'Content-Type, Authorization, Origin, X-Requested-With, Accept, X-Refreshed-Token, Access-Control-Request-Method, Access-Control-Request-Headers'
       );
     }
 
@@ -107,6 +130,9 @@ async function startServer() {
     }
     next();
   });
+
+  app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   // Ensure uploads directory exists and is statically served (safely guarded)
   const uploadsDir = path.join(process.cwd(), 'uploads');

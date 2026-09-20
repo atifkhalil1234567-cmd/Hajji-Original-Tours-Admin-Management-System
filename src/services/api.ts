@@ -96,7 +96,12 @@ export function getBaseUrl(): string {
  */
 export function buildApiUrl(endpoint: string): string {
   const base = getApiBaseUrl();
-  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+
+  // Ensure /auth/login never accidentally contains query parameters (e.g. ?utm_source=chatgpt.com)
+  if (cleanEndpoint.startsWith('/auth/login') || cleanEndpoint.startsWith('/api/auth/login')) {
+    cleanEndpoint = cleanEndpoint.split('?')[0];
+  }
 
   // Ensure /api prefix without duplication
   const apiPath = cleanEndpoint.startsWith('/api/') || cleanEndpoint === '/api'
