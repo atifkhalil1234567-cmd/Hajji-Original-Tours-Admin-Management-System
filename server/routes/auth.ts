@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { dbQuery, dbRun, getDbStatus } from '../db';
 import { generateToken, authenticate, logActivity, AuthRequest } from '../middleware/auth';
+import { ensureStaffAccounts } from '../staffAccounts';
 
 const router = Router();
 
@@ -210,6 +211,32 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
         }
       } catch (autoErr: any) {
         console.warn('[Auth] Auto-heal check notice:', autoErr.message);
+      }
+    }
+
+    // Auto-ensure Manager and Staff accounts if this login attempt is for them
+    if (admins.length === 0) {
+      const lower = cleanUsername.toLowerCase();
+      if (
+        lower === 'manager' ||
+        lower === 'manager@hajjioriginaltours.com' ||
+        lower === 'staff' ||
+        lower === 'staff@hajjioriginaltours.com'
+      ) {
+        try {
+          await ensureStaffAccounts();
+          admins = await dbQuery(
+            `SELECT a.*, r.slug as role_slug, r.name as role_name
+             FROM admins a
+             LEFT JOIN admin_roles r ON a.role_id = r.id
+             WHERE (LOWER(a.username) = LOWER(?) OR LOWER(a.email) = LOWER(?))
+               AND a.deleted_at IS NULL
+             LIMIT 1`,
+            [cleanUsername, cleanUsername]
+          );
+        } catch (staffAutoErr: any) {
+          console.warn('[Auth] Staff auto-ensure error:', staffAutoErr.message);
+        }
       }
     }
 

@@ -855,7 +855,9 @@ INSERT INTO `admin_roles` (`id`, `slug`, `name`, `description`, `is_system`, `st
 (3, 'crm_sales_agent', 'CRM & Sales Agent', 'Customer CRM, lead inquiry processing, bookings and traveler relations', 1, 'active'),
 (4, 'finance_officer', 'Finance & Accounts Officer', 'Payments, invoices, receipts, expenses, financial reconciliation', 1, 'active'),
 (5, 'visa_specialist', 'Visa & Documentation Specialist', 'Pilgrim passports, MOFA submissions, visa approval workflows', 1, 'active'),
-(6, 'cms_editor', 'Website Content Editor', 'CMS pages, sliders, banners, testimonials, media library', 1, 'active');
+(6, 'cms_editor', 'Website Content Editor', 'CMS pages, sliders, banners, testimonials, media library', 1, 'active'),
+(7, 'manager', 'Manager', 'Department & Operations Manager with team oversight', 1, 'active'),
+(8, 'staff', 'Staff', 'Operational Staff with core CRM, bookings & traveler workflow access', 1, 'active');
 
 INSERT INTO `admin_permissions` (`module`, `action`, `name`, `description`) VALUES
 ('dashboard', 'view', 'View Dashboard', 'Access live KPIs and analytics charts'),
@@ -884,9 +886,19 @@ INSERT INTO `admin_permissions` (`module`, `action`, `name`, `description`) VALU
 INSERT INTO `role_permissions` (`role_id`, `permission_id`)
 SELECT 1, id FROM `admin_permissions`;
 
+-- Grant Manager permissions (Role 7)
+INSERT INTO `role_permissions` (`role_id`, `permission_id`)
+SELECT 7, id FROM `admin_permissions` WHERE (`module` IN ('dashboard', 'packages', 'hotels', 'customers', 'leads', 'bookings', 'finance', 'visas', 'flights', 'transport', 'cms', 'media', 'audit')) AND (`action` IN ('view', 'manage'));
+
+-- Grant Staff permissions (Role 8)
+INSERT INTO `role_permissions` (`role_id`, `permission_id`)
+SELECT 8, id FROM `admin_permissions` WHERE (`module` = 'dashboard' AND `action` = 'view') OR (`module` IN ('packages', 'hotels', 'visas') AND `action` = 'view') OR (`module` IN ('customers', 'leads', 'bookings', 'media') AND `action` IN ('view', 'manage'));
+
 -- Initial Super Admin (Password hash for 'admin123' using bcrypt)
 INSERT INTO `admins` (`id`, `role_id`, `first_name`, `last_name`, `username`, `email`, `phone`, `password`, `status`) VALUES
-(1, 1, 'Atif', 'Khalil', 'superadmin', 'admin@hajjioriginal.com', '+966 50 123 4567', '$2b$10$3LarB2UPSbdPa4MwL5IGduX1.JQpylso2pE5rYU0OONmYx7Qp60oC', 'active');
+(1, 1, 'Atif', 'Khalil', 'superadmin', 'admin@hajjioriginal.com', '+966 50 123 4567', '$2b$10$3LarB2UPSbdPa4MwL5IGduX1.JQpylso2pE5rYU0OONmYx7Qp60oC', 'active'),
+(2, 7, 'Operations', 'Manager', 'manager', 'manager@hajjioriginaltours.com', '', '$2b$10$NeNfr2kCDQCmlLdmgWtYveYs6lpfk7VOoCXf6TuxS.rOuUiMhLjEq', 'active'),
+(3, 8, 'Operations', 'Staff', 'staff', 'staff@hajjioriginaltours.com', '', '$2b$10$9/doS.PRKXYcyHXU9kvRS.YB6hlcHIzdI8c/HEanMOEajJPodWrIe', 'active');
 
 -- Currencies
 INSERT INTO `currencies` (`code`, `name`, `symbol`, `is_default`, `status`) VALUES

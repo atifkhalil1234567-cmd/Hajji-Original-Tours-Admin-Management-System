@@ -4,6 +4,18 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -21,22 +33,199 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// server.ts
-var import_config = require("dotenv/config");
-var import_express12 = __toESM(require("express"));
-var import_path4 = __toESM(require("path"));
-var import_fs4 = __toESM(require("fs"));
+// server/staffAccounts.ts
+var staffAccounts_exports = {};
+__export(staffAccounts_exports, {
+  ensureStaffAccounts: () => ensureStaffAccounts
+});
+async function ensureStaffAccounts() {
+  const result = {
+    manager: { created: false, active: false, role: "manager" },
+    staff: { created: false, active: false, role: "staff" }
+  };
+  try {
+    let managerRoleId = null;
+    try {
+      const existingManagerRoles = await dbQuery(
+        `SELECT id, slug, name FROM admin_roles WHERE slug = 'manager' OR slug = 'operations_manager' ORDER BY CASE WHEN slug = 'manager' THEN 1 ELSE 2 END LIMIT 1`
+      );
+      if (existingManagerRoles.length === 0) {
+        const insertRes = await dbRun(
+          `INSERT INTO admin_roles (slug, name, description, is_system, status)
+           VALUES ('manager', 'Manager', 'Department & Operations Manager with team oversight', 1, 'active')`
+        );
+        managerRoleId = insertRes.insertId || 7;
+      } else {
+        const exact = existingManagerRoles.find((r) => r.slug === "manager");
+        if (exact) {
+          managerRoleId = exact.id;
+        } else {
+          try {
+            const insertRes = await dbRun(
+              `INSERT INTO admin_roles (slug, name, description, is_system, status)
+               VALUES ('manager', 'Manager', 'Department & Operations Manager with team oversight', 1, 'active')`
+            );
+            managerRoleId = insertRes.insertId || 7;
+          } catch {
+            managerRoleId = existingManagerRoles[0].id;
+          }
+        }
+      }
+    } catch (roleErr) {
+      console.warn("[Staff Accounts] Manager role resolution warning:", roleErr.message);
+    }
+    let staffRoleId = null;
+    try {
+      const existingStaffRoles = await dbQuery(
+        `SELECT id, slug, name FROM admin_roles WHERE slug = 'staff' OR slug = 'crm_sales_agent' ORDER BY CASE WHEN slug = 'staff' THEN 1 ELSE 2 END LIMIT 1`
+      );
+      if (existingStaffRoles.length === 0) {
+        const insertRes = await dbRun(
+          `INSERT INTO admin_roles (slug, name, description, is_system, status)
+           VALUES ('staff', 'Staff', 'Operational Staff with core CRM, bookings & traveler workflow access', 1, 'active')`
+        );
+        staffRoleId = insertRes.insertId || 8;
+      } else {
+        const exact = existingStaffRoles.find((r) => r.slug === "staff");
+        if (exact) {
+          staffRoleId = exact.id;
+        } else {
+          try {
+            const insertRes = await dbRun(
+              `INSERT INTO admin_roles (slug, name, description, is_system, status)
+               VALUES ('staff', 'Staff', 'Operational Staff with core CRM, bookings & traveler workflow access', 1, 'active')`
+            );
+            staffRoleId = insertRes.insertId || 8;
+          } catch {
+            staffRoleId = existingStaffRoles[0].id;
+          }
+        }
+      }
+    } catch (roleErr) {
+      console.warn("[Staff Accounts] Staff role resolution warning:", roleErr.message);
+    }
+    if (!managerRoleId) managerRoleId = 2;
+    if (!staffRoleId) staffRoleId = 3;
+    try {
+      const allPerms = await dbQuery(`SELECT id, module, action FROM admin_permissions`);
+      const permMap = /* @__PURE__ */ new Map();
+      for (const p of allPerms) {
+        permMap.set(`${p.module}:${p.action}`, p.id);
+      }
+      const managerPermKeys = [
+        "dashboard:view",
+        "packages:view",
+        "packages:manage",
+        "hotels:view",
+        "hotels:manage",
+        "customers:view",
+        "customers:manage",
+        "leads:view",
+        "leads:manage",
+        "bookings:view",
+        "bookings:manage",
+        "finance:view",
+        "finance:manage",
+        "visas:view",
+        "visas:manage",
+        "flights:manage",
+        "transport:manage",
+        "cms:manage",
+        "media:manage",
+        "audit:view"
+      ];
+      for (const key of managerPermKeys) {
+        const pId = permMap.get(key);
+        if (pId) {
+          const check = await dbQuery(
+            `SELECT 1 FROM role_permissions WHERE role_id = ? AND permission_id = ?`,
+            [managerRoleId, pId]
+          );
+          if (check.length === 0) {
+            await dbRun(`INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)`, [managerRoleId, pId]);
+          }
+        }
+      }
+      const staffPermKeys = [
+        "dashboard:view",
+        "packages:view",
+        "hotels:view",
+        "customers:view",
+        "customers:manage",
+        "leads:view",
+        "leads:manage",
+        "bookings:view",
+        "bookings:manage",
+        "visas:view",
+        "media:manage"
+      ];
+      for (const key of staffPermKeys) {
+        const pId = permMap.get(key);
+        if (pId) {
+          const check = await dbQuery(
+            `SELECT 1 FROM role_permissions WHERE role_id = ? AND permission_id = ?`,
+            [staffRoleId, pId]
+          );
+          if (check.length === 0) {
+            await dbRun(`INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)`, [staffRoleId, pId]);
+          }
+        }
+      }
+    } catch (permErr) {
+      console.warn("[Staff Accounts] Permissions assignment warning:", permErr.message);
+    }
+    const managerHash = await import_bcryptjs.default.hash(MANAGER_PASSWORD_PLAIN, 10);
+    const staffHash = await import_bcryptjs.default.hash(STAFF_PASSWORD_PLAIN, 10);
+    const managerAdmins = await dbQuery(
+      `SELECT id, username, email, status, role_id FROM admins WHERE (LOWER(username) = 'manager' OR LOWER(email) = 'manager@hajjioriginaltours.com') AND deleted_at IS NULL`
+    );
+    if (managerAdmins.length === 0) {
+      await dbRun(
+        `INSERT INTO admins (role_id, first_name, last_name, username, email, phone, password, status)
+         VALUES (?, 'Operations', 'Manager', 'manager', 'manager@hajjioriginaltours.com', '', ?, 'active')`,
+        [managerRoleId, managerHash]
+      );
+      result.manager = { created: true, active: true, role: "manager" };
+    } else {
+      await dbRun(
+        `UPDATE admins SET password = ?, status = 'active', role_id = ?, deleted_at = NULL WHERE id = ?`,
+        [managerHash, managerRoleId, managerAdmins[0].id]
+      );
+      result.manager = { created: true, active: true, role: "manager" };
+    }
+    const staffAdmins = await dbQuery(
+      `SELECT id, username, email, status, role_id FROM admins WHERE (LOWER(username) = 'staff' OR LOWER(email) = 'staff@hajjioriginaltours.com') AND deleted_at IS NULL`
+    );
+    if (staffAdmins.length === 0) {
+      await dbRun(
+        `INSERT INTO admins (role_id, first_name, last_name, username, email, phone, password, status)
+         VALUES (?, 'Operations', 'Staff', 'staff', 'staff@hajjioriginaltours.com', '', ?, 'active')`,
+        [staffRoleId, staffHash]
+      );
+      result.staff = { created: true, active: true, role: "staff" };
+    } else {
+      await dbRun(
+        `UPDATE admins SET password = ?, status = 'active', role_id = ?, deleted_at = NULL WHERE id = ?`,
+        [staffHash, staffRoleId, staffAdmins[0].id]
+      );
+      result.staff = { created: true, active: true, role: "staff" };
+    }
+  } catch (err) {
+    console.error("[Staff Accounts] Setup error:", err.message);
+  }
+  return result;
+}
+var import_bcryptjs, MANAGER_PASSWORD_PLAIN, STAFF_PASSWORD_PLAIN;
+var init_staffAccounts = __esm({
+  "server/staffAccounts.ts"() {
+    import_bcryptjs = __toESM(require("bcryptjs"));
+    init_db();
+    MANAGER_PASSWORD_PLAIN = "Manager@2026!";
+    STAFF_PASSWORD_PLAIN = "Staff@2026!";
+  }
+});
 
 // server/db.ts
-var import_promise = __toESM(require("mysql2/promise"));
-var import_fs = __toESM(require("fs"));
-var import_path = __toESM(require("path"));
-var import_sql = __toESM(require("sql.js"));
-var mysqlPool = null;
-var sqliteDb = null;
-var isUsingMySQL = false;
-var lastMySQLConnectionError = null;
-var sqliteFilePath = import_path.default.join(process.cwd(), "data_store.sqlite");
 function isProductionEnv() {
   return process.env.NODE_ENV === "production";
 }
@@ -79,6 +268,10 @@ async function initDatabase() {
           tablesCount = 99;
         }
         console.log(`[DB] Successfully connected to Hostinger MySQL at ${host}:${port}/${database} (${tablesCount} tables).`);
+        Promise.resolve().then(() => (init_staffAccounts(), staffAccounts_exports)).then(({ ensureStaffAccounts: ensureStaffAccounts2 }) => {
+          ensureStaffAccounts2().catch((e) => console.warn("[DB] MySQL ensureStaffAccounts note:", e.message));
+        }).catch(() => {
+        });
         return {
           connected: true,
           engine: "mysql",
@@ -183,6 +376,10 @@ async function initDatabase() {
         }
       }
       sqliteDb.run("UPDATE customers SET assigned_role = 'Customer', approved_at = '2026-01-01 00:00:00', approved_by_admin_id = 1 WHERE (assigned_role IS NULL OR assigned_role = '') AND (status = 'active' OR status = 'approved');");
+      Promise.resolve().then(() => (init_staffAccounts(), staffAccounts_exports)).then(({ ensureStaffAccounts: ensureStaffAccounts2 }) => {
+        ensureStaffAccounts2().catch((e) => console.warn("[DB] SQLite ensureStaffAccounts note:", e.message));
+      }).catch(() => {
+      });
       saveSqliteToFile();
     } catch (migErr) {
       console.warn("[DB] Currency / seed migration notice:", migErr);
@@ -406,13 +603,36 @@ async function testMySQLQuery() {
     return false;
   }
 }
+var import_promise, import_fs, import_path, import_sql, mysqlPool, sqliteDb, isUsingMySQL, lastMySQLConnectionError, sqliteFilePath;
+var init_db = __esm({
+  "server/db.ts"() {
+    import_promise = __toESM(require("mysql2/promise"));
+    import_fs = __toESM(require("fs"));
+    import_path = __toESM(require("path"));
+    import_sql = __toESM(require("sql.js"));
+    mysqlPool = null;
+    sqliteDb = null;
+    isUsingMySQL = false;
+    lastMySQLConnectionError = null;
+    sqliteFilePath = import_path.default.join(process.cwd(), "data_store.sqlite");
+  }
+});
+
+// server.ts
+var import_config = require("dotenv/config");
+var import_express12 = __toESM(require("express"));
+var import_path4 = __toESM(require("path"));
+var import_fs4 = __toESM(require("fs"));
+init_db();
 
 // server/routes/auth.ts
 var import_express = require("express");
-var import_bcryptjs = __toESM(require("bcryptjs"));
+var import_bcryptjs2 = __toESM(require("bcryptjs"));
+init_db();
 
 // server/middleware/auth.ts
 var import_jsonwebtoken = __toESM(require("jsonwebtoken"));
+init_db();
 var JWT_SECRET = process.env.JWT_SECRET || "hajji_original_tours_secure_session_2026";
 function generateToken(user) {
   return import_jsonwebtoken.default.sign(user, JWT_SECRET, { expiresIn: "30d" });
@@ -489,7 +709,40 @@ async function logActivity(adminId, module2, action, recordId, description, req)
 }
 
 // server/routes/auth.ts
+init_staffAccounts();
 var router = (0, import_express.Router)();
+var safeAuthLogs = [];
+function recordAuthLog(entry) {
+  safeAuthLogs.unshift(entry);
+  if (safeAuthLogs.length > 30) {
+    safeAuthLogs.pop();
+  }
+}
+function getSafeAuthLogs() {
+  return [...safeAuthLogs];
+}
+router.options("/login", (req, res) => {
+  const origin = req.headers.origin || "https://hajjioriginaltours.com";
+  const ip = req.ip || req.socket?.remoteAddress || "127.0.0.1";
+  res.setHeader("Access-Control-Allow-Origin", origin === "null" ? "*" : origin);
+  if (origin !== "null") {
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Max-Age", "86400");
+  console.log(`[Auth Login Preflight] OPTIONS /api/auth/login from Origin: "${origin}", IP: ${ip}`);
+  recordAuthLog({
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    method: "OPTIONS",
+    path: "/api/auth/login",
+    origin,
+    ip,
+    status: 204,
+    message: "Preflight OK"
+  });
+  res.status(204).end();
+});
 router.get("/diagnostic", async (req, res) => {
   try {
     const dbStatus = await getDbStatus();
@@ -536,7 +789,8 @@ router.get("/diagnostic", async (req, res) => {
         nodeEnv: process.env.NODE_ENV || "development",
         port: process.env.PORT || 3e3,
         corsEnabled: true
-      }
+      },
+      recentAuthLogs: getSafeAuthLogs()
     });
   } catch (err) {
     res.status(500).json({
@@ -547,16 +801,28 @@ router.get("/diagnostic", async (req, res) => {
   }
 });
 router.post("/login", async (req, res) => {
+  const ip = req.ip || req.socket?.remoteAddress || "127.0.0.1";
+  const origin = req.headers.origin || "none";
+  const ua = req.headers["user-agent"] || "";
+  const { username, password } = req.body || {};
+  const cleanUsername = username ? String(username).trim() : "";
+  console.log(`[Auth Login Request] POST /api/auth/login - Identifier: "${cleanUsername || "empty"}" - Origin: "${origin}" - IP: ${ip}`);
   try {
-    const { username, password } = req.body || {};
-    const ip = req.ip || req.socket?.remoteAddress || "127.0.0.1";
-    const ua = req.headers["user-agent"] || "";
     if (!username || !password) {
+      recordAuthLog({
+        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+        method: "POST",
+        path: "/api/auth/login",
+        origin,
+        ip,
+        identifier: cleanUsername || void 0,
+        status: 400,
+        message: "Missing username or password"
+      });
+      console.log(`[Auth Login Response] POST /api/auth/login -> Status 400 (Missing fields)`);
       res.status(400).json({ success: false, message: "Username and password are required" });
       return;
     }
-    const cleanUsername = String(username).trim();
-    console.log(`[Auth] Inbound login attempt for identifier: "${cleanUsername}" from IP: ${ip}`);
     let admins = [];
     try {
       admins = await dbQuery(
@@ -619,7 +885,36 @@ router.post("/login", async (req, res) => {
       }
     }
     if (admins.length === 0) {
-      console.warn(`[Auth] Failed login: User not found for identifier "${cleanUsername}"`);
+      const lower = cleanUsername.toLowerCase();
+      if (lower === "manager" || lower === "manager@hajjioriginaltours.com" || lower === "staff" || lower === "staff@hajjioriginaltours.com") {
+        try {
+          await ensureStaffAccounts();
+          admins = await dbQuery(
+            `SELECT a.*, r.slug as role_slug, r.name as role_name
+             FROM admins a
+             LEFT JOIN admin_roles r ON a.role_id = r.id
+             WHERE (LOWER(a.username) = LOWER(?) OR LOWER(a.email) = LOWER(?))
+               AND a.deleted_at IS NULL
+             LIMIT 1`,
+            [cleanUsername, cleanUsername]
+          );
+        } catch (staffAutoErr) {
+          console.warn("[Auth] Staff auto-ensure error:", staffAutoErr.message);
+        }
+      }
+    }
+    if (admins.length === 0) {
+      console.warn(`[Auth Login Response] POST /api/auth/login -> Status 401 (User not found for identifier "${cleanUsername}")`);
+      recordAuthLog({
+        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+        method: "POST",
+        path: "/api/auth/login",
+        origin,
+        ip,
+        identifier: cleanUsername,
+        status: 401,
+        message: "User not found"
+      });
       try {
         await dbRun(
           `INSERT INTO login_attempts (username_or_email, ip_address, user_agent, status) VALUES (?, ?, ?, 'failed')`,
@@ -632,7 +927,17 @@ router.post("/login", async (req, res) => {
     }
     const admin = admins[0];
     if (admin.status !== "active") {
-      console.warn(`[Auth] Blocked login: Account status "${admin.status}" for "${admin.username}"`);
+      console.warn(`[Auth Login Response] POST /api/auth/login -> Status 403 (Account status "${admin.status}" for "${admin.username}")`);
+      recordAuthLog({
+        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+        method: "POST",
+        path: "/api/auth/login",
+        origin,
+        ip,
+        identifier: cleanUsername,
+        status: 403,
+        message: `Account status: ${admin.status}`
+      });
       try {
         await dbRun(
           `INSERT INTO login_attempts (username_or_email, ip_address, user_agent, status) VALUES (?, ?, ?, 'blocked')`,
@@ -646,10 +951,20 @@ router.post("/login", async (req, res) => {
     let isValid = false;
     const storedPassword = String(admin.password || "");
     if (storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$") || storedPassword.startsWith("$2y$")) {
-      isValid = await import_bcryptjs.default.compare(password, storedPassword);
+      isValid = await import_bcryptjs2.default.compare(password, storedPassword);
     }
     if (!isValid) {
-      console.warn(`[Auth] Failed login: Password mismatch for admin "${admin.username}"`);
+      console.warn(`[Auth Login Response] POST /api/auth/login -> Status 401 (Password mismatch for admin "${admin.username}")`);
+      recordAuthLog({
+        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+        method: "POST",
+        path: "/api/auth/login",
+        origin,
+        ip,
+        identifier: cleanUsername,
+        status: 401,
+        message: "Password mismatch"
+      });
       try {
         await dbRun(`UPDATE admins SET failed_login_count = failed_login_count + 1 WHERE id = ?`, [admin.id]);
         await dbRun(
@@ -724,7 +1039,17 @@ router.post("/login", async (req, res) => {
       permissions: perms
     };
     const token = generateToken(userPayload);
-    console.log(`[Auth] Success: Admin "${admin.username}" (${admin.email}) logged in successfully.`);
+    console.log(`[Auth Login Response] POST /api/auth/login -> Status 200 (Success for "${admin.username}", Role: ${admin.role_name || admin.role_slug})`);
+    recordAuthLog({
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      method: "POST",
+      path: "/api/auth/login",
+      origin,
+      ip,
+      identifier: cleanUsername,
+      status: 200,
+      message: "Login successful"
+    });
     try {
       await logActivity(admin.id, "auth", "login", admin.id, `Admin ${admin.username} logged in successfully.`, req);
     } catch {
@@ -737,6 +1062,16 @@ router.post("/login", async (req, res) => {
     });
   } catch (err) {
     console.error("[Auth Error]", err.message, err.stack);
+    recordAuthLog({
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      method: "POST",
+      path: "/api/auth/login",
+      origin,
+      ip,
+      identifier: cleanUsername || void 0,
+      status: 500,
+      message: `Server error: ${err.message}`
+    });
     res.status(500).json({
       success: false,
       message: `Authentication failed: ${err.message || "Server error"}`
@@ -753,7 +1088,7 @@ router.post("/change-password", authenticate, async (req, res) => {
       res.status(400).json({ success: false, message: "New password must be at least 6 characters" });
       return;
     }
-    const hashed = await import_bcryptjs.default.hash(newPassword, 10);
+    const hashed = await import_bcryptjs2.default.hash(newPassword, 10);
     await dbRun(`UPDATE admins SET password = ? WHERE id = ?`, [hashed, req.user.id]);
     await logActivity(req.user.id, "auth", "password_change", req.user.id, `Password changed by ${req.user.username}`, req);
     res.json({ success: true, message: "Password updated successfully" });
@@ -771,6 +1106,7 @@ var auth_default = router;
 
 // server/routes/dashboard.ts
 var import_express2 = require("express");
+init_db();
 var router2 = (0, import_express2.Router)();
 router2.get("/stats", authenticate, async (req, res) => {
   try {
@@ -905,6 +1241,7 @@ var dashboard_default = router2;
 
 // server/routes/packages.ts
 var import_express3 = require("express");
+init_db();
 var router3 = (0, import_express3.Router)();
 var CURRENCY_ID_MAP = {
   USD: 1,
@@ -1318,6 +1655,7 @@ var packages_default = router3;
 
 // server/routes/hotels.ts
 var import_express4 = require("express");
+init_db();
 var router4 = (0, import_express4.Router)();
 router4.get("/", authenticate, async (req, res) => {
   try {
@@ -1429,6 +1767,7 @@ var hotels_default = router4;
 
 // server/routes/crm.ts
 var import_express5 = require("express");
+init_db();
 var router5 = (0, import_express5.Router)();
 router5.get("/customers", authenticate, async (req, res) => {
   try {
@@ -1694,6 +2033,7 @@ var crm_default = router5;
 
 // server/routes/bookings.ts
 var import_express6 = require("express");
+init_db();
 var router6 = (0, import_express6.Router)();
 router6.get("/statuses", authenticate, async (req, res) => {
   try {
@@ -1979,6 +2319,7 @@ var bookings_default = router6;
 
 // server/routes/finance.ts
 var import_express7 = require("express");
+init_db();
 var router7 = (0, import_express7.Router)();
 router7.get("/methods", authenticate, async (req, res) => {
   try {
@@ -2191,6 +2532,7 @@ var finance_default = router7;
 
 // server/routes/travel.ts
 var import_express8 = require("express");
+init_db();
 var router8 = (0, import_express8.Router)();
 router8.get("/visas", authenticate, async (req, res) => {
   try {
@@ -2327,6 +2669,7 @@ var import_express9 = require("express");
 var import_multer = __toESM(require("multer"));
 var import_path2 = __toESM(require("path"));
 var import_fs2 = __toESM(require("fs"));
+init_db();
 var router9 = (0, import_express9.Router)();
 var uploadDir = import_path2.default.join(process.cwd(), "uploads");
 if (!import_fs2.default.existsSync(uploadDir)) {
@@ -2507,9 +2850,10 @@ var cms_default = router9;
 
 // server/routes/admin.ts
 var import_express10 = require("express");
-var import_bcryptjs2 = __toESM(require("bcryptjs"));
+var import_bcryptjs3 = __toESM(require("bcryptjs"));
 var import_fs3 = __toESM(require("fs"));
 var import_path3 = __toESM(require("path"));
+init_db();
 var router10 = (0, import_express10.Router)();
 router10.get("/users", authenticate, authorize("settings", "manage"), async (req, res) => {
   try {
@@ -2535,7 +2879,7 @@ router10.post("/users", authenticate, authorize("settings", "manage"), async (re
       res.status(400).json({ success: false, message: "Admin username or email already exists" });
       return;
     }
-    const hashedPassword = await import_bcryptjs2.default.hash(password || "Hajji2026!Admin", 10);
+    const hashedPassword = await import_bcryptjs3.default.hash(password || "Hajji2026!Admin", 10);
     const result = await dbRun(`
       INSERT INTO admins (first_name, last_name, username, email, phone, role_id, password, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -2996,8 +3340,9 @@ var admin_default = router10;
 
 // server/routes/customerAuth.ts
 var import_express11 = require("express");
-var import_bcryptjs3 = __toESM(require("bcryptjs"));
+var import_bcryptjs4 = __toESM(require("bcryptjs"));
 var import_jsonwebtoken2 = __toESM(require("jsonwebtoken"));
+init_db();
 var router11 = (0, import_express11.Router)();
 var JWT_SECRET2 = process.env.JWT_SECRET || "hajji_original_tours_secure_session_2026";
 async function authenticateCustomer(req, res, next) {
@@ -3103,14 +3448,14 @@ router11.post("/login", async (req, res) => {
     }
     if (storedHash) {
       if (storedHash.startsWith("$2a$") || storedHash.startsWith("$2b$") || storedHash.startsWith("$2y$")) {
-        isValid = await import_bcryptjs3.default.compare(password, storedHash);
+        isValid = await import_bcryptjs4.default.compare(password, storedHash);
       } else {
         isValid = password === storedHash;
       }
     } else {
       if (password === "customer123" || password === "password123") {
         isValid = true;
-        const newHash = await import_bcryptjs3.default.hash(password, 10);
+        const newHash = await import_bcryptjs4.default.hash(password, 10);
         try {
           await dbRun(
             `INSERT INTO customer_notes (customer_id, category, note) VALUES (?, 'CRM', ?)`,
@@ -3196,7 +3541,7 @@ router11.post("/register", async (req, res) => {
        LIMIT 1`,
       [cleanEmail]
     );
-    const hashedPassword = await import_bcryptjs3.default.hash(password, 10);
+    const hashedPassword = await import_bcryptjs4.default.hash(password, 10);
     let customerId;
     let customerCode;
     if (existing.length > 0) {
@@ -3392,45 +3737,88 @@ async function startServer() {
   const app = (0, import_express12.default)();
   const PORT = Number(process.env.PORT) || 3e3;
   const HOST = "0.0.0.0";
-  app.use(import_express12.default.json({ limit: "10mb" }));
-  app.use(import_express12.default.urlencoded({ extended: true, limit: "10mb" }));
   const configuredCorsOrigins = (process.env.CORS_ORIGIN || "").split(",").map((o) => o.trim()).filter(Boolean);
+  const KNOWN_ALLOWED_ORIGINS = /* @__PURE__ */ new Set([
+    "https://hajjioriginaltours.com",
+    "http://hajjioriginaltours.com",
+    "https://www.hajjioriginaltours.com",
+    "http://www.hajjioriginaltours.com",
+    "https://admin.hajjioriginaltours.com",
+    "https://api.hajjioriginaltours.com"
+  ]);
   app.use((req, res, next) => {
     const origin = req.headers.origin;
     if (origin && typeof origin === "string") {
       let isAllowed = false;
-      if (configuredCorsOrigins.length === 0) {
+      if (KNOWN_ALLOWED_ORIGINS.has(origin)) {
         isAllowed = true;
       } else {
-        isAllowed = configuredCorsOrigins.some((allowed) => {
-          if (allowed === "*" || allowed === origin) return true;
-          const cleanAllowed = allowed.replace(/^https?:\/\//, "");
-          if (cleanAllowed.startsWith("*.")) {
-            const rootDomain = cleanAllowed.slice(2);
-            try {
-              const originHost = new URL(origin).hostname;
-              return originHost === rootDomain || originHost.endsWith(`.${rootDomain}`);
-            } catch {
-              return false;
-            }
+        try {
+          const originHost = new URL(origin).hostname;
+          if (originHost === "hajjioriginaltours.com" || originHost.endsWith(".hajjioriginaltours.com")) {
+            isAllowed = true;
           }
-          return false;
-        });
+        } catch {
+        }
+      }
+      if (!isAllowed) {
+        if (configuredCorsOrigins.length === 0) {
+          isAllowed = true;
+        } else {
+          isAllowed = configuredCorsOrigins.some((allowed) => {
+            if (allowed === "*" || allowed === origin) return true;
+            const cleanAllowed = allowed.replace(/^https?:\/\//, "");
+            if (cleanAllowed.startsWith("*.")) {
+              const rootDomain = cleanAllowed.slice(2);
+              try {
+                const originHost = new URL(origin).hostname;
+                return originHost === rootDomain || originHost.endsWith(`.${rootDomain}`);
+              } catch {
+                return false;
+              }
+            }
+            return false;
+          });
+        }
       }
       if (isAllowed) {
-        res.setHeader("Access-Control-Allow-Origin", origin);
-        res.setHeader("Access-Control-Allow-Credentials", "true");
+        if (origin === "null") {
+          res.setHeader("Access-Control-Allow-Origin", "*");
+        } else {
+          res.setHeader("Access-Control-Allow-Origin", origin);
+          res.setHeader("Access-Control-Allow-Credentials", "true");
+        }
       }
+    } else {
+      res.setHeader("Access-Control-Allow-Origin", "https://hajjioriginaltours.com");
     }
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Refreshed-Token");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    const reqHeaders = req.headers["access-control-request-headers"];
+    if (reqHeaders && typeof reqHeaders === "string") {
+      const headerSet = new Set(reqHeaders.split(",").map((h) => h.trim()));
+      headerSet.add("Content-Type");
+      headerSet.add("Authorization");
+      res.setHeader("Access-Control-Allow-Headers", Array.from(headerSet).join(", "));
+    } else {
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, Origin, X-Requested-With, Accept, X-Refreshed-Token, Access-Control-Request-Method, Access-Control-Request-Headers"
+      );
+    }
     res.setHeader("Access-Control-Expose-Headers", "X-Refreshed-Token");
+    res.setHeader("Access-Control-Max-Age", "86400");
+    if (req.originalUrl?.includes("/auth/") || req.url?.includes("/auth/")) {
+      const clientIp = req.ip || req.socket?.remoteAddress || "127.0.0.1";
+      console.log(`[HTTP ${req.method}] ${req.originalUrl || req.url} - Origin: "${origin || "none"}" - IP: ${clientIp}`);
+    }
     if (req.method === "OPTIONS") {
-      res.sendStatus(204);
+      res.status(204).end();
       return;
     }
     next();
   });
+  app.use(import_express12.default.json({ limit: "10mb" }));
+  app.use(import_express12.default.urlencoded({ extended: true, limit: "10mb" }));
   const uploadsDir = import_path4.default.join(process.cwd(), "uploads");
   if (!import_fs4.default.existsSync(uploadsDir)) {
     try {

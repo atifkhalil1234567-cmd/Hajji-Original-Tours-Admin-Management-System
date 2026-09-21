@@ -76,6 +76,11 @@ export async function initDatabase(): Promise<DbStatus> {
 
         console.log(`[DB] Successfully connected to Hostinger MySQL at ${host}:${port}/${database} (${tablesCount} tables).`);
 
+        // Ensure manager and staff accounts and roles exist in MySQL
+        import('./staffAccounts').then(({ ensureStaffAccounts }) => {
+          ensureStaffAccounts().catch((e) => console.warn('[DB] MySQL ensureStaffAccounts note:', e.message));
+        }).catch(() => {});
+
         return {
           connected: true,
           engine: 'mysql',
@@ -195,6 +200,11 @@ export async function initDatabase(): Promise<DbStatus> {
 
       // Ensure existing active seed customers have assigned_role set if null
       sqliteDb.run("UPDATE customers SET assigned_role = 'Customer', approved_at = '2026-01-01 00:00:00', approved_by_admin_id = 1 WHERE (assigned_role IS NULL OR assigned_role = '') AND (status = 'active' OR status = 'approved');");
+
+      // Ensure manager and staff accounts and roles exist in SQLite
+      import('./staffAccounts').then(({ ensureStaffAccounts }) => {
+        ensureStaffAccounts().catch((e) => console.warn('[DB] SQLite ensureStaffAccounts note:', e.message));
+      }).catch(() => {});
 
       saveSqliteToFile();
     } catch (migErr) {
