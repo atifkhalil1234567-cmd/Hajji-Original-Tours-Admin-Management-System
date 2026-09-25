@@ -20,16 +20,16 @@ export function normalizeApiBaseUrl(url: string | undefined | null): string {
 /**
  * Production backend API Base URL hosted on Hostinger
  */
-export const PRODUCTION_API_BASE_URL = 'https://api.hajjioriginaltours.com';
+export const PRODUCTION_API_BASE_URL = 'https://myc.hajjioriginaltours.com';
 
 /**
- * Returns the exact string set in import.meta.env.VITE_API_BASE_URL (empty if not set or stale Vercel URL)
+ * Returns the exact string set in import.meta.env.VITE_API_BASE_URL (empty if not set or stale URL)
  */
 export function getRawViteApiBaseUrl(): string {
   const envUrl = (import.meta as any).env?.VITE_API_BASE_URL;
   if (typeof envUrl === 'string') {
     const trimmed = envUrl.trim();
-    if (trimmed.includes('vercel.app')) {
+    if (trimmed.includes('vercel.app') || trimmed.includes('api.hajjioriginaltours.com')) {
       return '';
     }
     return trimmed;
@@ -42,16 +42,16 @@ export function getRawViteApiBaseUrl(): string {
  * 1. Runtime override in localStorage (allows interactive testing on diagnostic panel)
  * 2. Optional override via environment variable: import.meta.env.VITE_API_BASE_URL
  * 3. Fallback to same-origin ONLY if running directly on the api backend subdomain
- * 4. Production Hostinger backend base URL: https://api.hajjioriginaltours.com
+ * 4. Production Hostinger backend base URL: https://myc.hajjioriginaltours.com
  */
 export function getApiBaseUrl(): string {
-  // 1. Runtime override in localStorage (allows interactive testing, purges any forbidden domains)
+  // 1. Runtime override in localStorage (allows interactive testing, purges any forbidden domains or stale URLs)
   if (typeof window !== 'undefined') {
     const custom = localStorage.getItem('hajji_custom_api_url');
     if (custom && custom.trim()) {
       const isForbidden =
         custom.includes('vercel.app') ||
-        custom.includes('myc.hajjioriginaltours.com') ||
+        custom.includes('api.hajjioriginaltours.com') ||
         custom.includes('localhost') ||
         custom.includes('run.app');
       if (isForbidden) {
@@ -62,21 +62,21 @@ export function getApiBaseUrl(): string {
     }
   }
 
-  // 2. Optional environment variable override: VITE_API_BASE_URL (excluding forbidden URLs)
+  // 2. Optional environment variable override: VITE_API_BASE_URL (excluding forbidden/stale URLs)
   const envUrl = (import.meta as any).env?.VITE_API_BASE_URL;
   if (
     envUrl &&
     typeof envUrl === 'string' &&
     envUrl.trim() &&
     !envUrl.includes('vercel.app') &&
-    !envUrl.includes('myc.hajjioriginaltours.com') &&
+    !envUrl.includes('api.hajjioriginaltours.com') &&
     !envUrl.includes('localhost') &&
     !envUrl.includes('run.app')
   ) {
     return normalizeApiBaseUrl(envUrl);
   }
 
-  // 3. Strict production backend URL: always https://api.hajjioriginaltours.com
+  // 3. Strict production backend URL: always https://myc.hajjioriginaltours.com
   return PRODUCTION_API_BASE_URL;
 }
 
@@ -168,6 +168,16 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     delete (headers as any)['Content-Type'];
   }
 
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const apiPath = cleanEndpoint.startsWith('/api/') || cleanEndpoint === '/api'
+    ? cleanEndpoint
+    : `/api${cleanEndpoint}`;
+
+  const isDifferentHost =
+    typeof window !== 'undefined' &&
+    window.location?.origin &&
+    !url.startsWith(window.location.origin);
+
   let response: Response;
   try {
     response = await fetch(url, {
@@ -176,15 +186,36 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       headers,
     });
   } catch (netErr: any) {
-    console.error(`[API Fetch Error on ${options.method || 'GET'} ${url}]:`, netErr);
-    const detailMsg = netErr?.message ? ` (${netErr.message})` : '';
-    const err: ApiError = new Error(
-      `Network Connection Error: The frontend cannot connect to the backend at "${url}". Please verify your backend server is running and accessible.${detailMsg}`
-    );
-    err.status = 0;
-    err.statusText = 'Network Error';
-    err.url = url;
-    throw err;
+    // If the remote backend is unreachable or CORS fails from preview/different host,
+    // gracefully attempt the local Express backend route before throwing.
+    if (isDifferentHost) {
+      try {
+        response = await fetch(apiPath, {
+          ...options,
+          headers,
+        });
+      } catch {
+        console.warn(`[API Network Warning on ${options.method || 'GET'} ${url}]:`, netErr?.message || netErr);
+        const detailMsg = netErr?.message ? ` (${netErr.message})` : '';
+        const err: ApiError = new Error(
+          `Network Connection Error: The frontend cannot connect to the backend at "${url}". Please verify your backend server is running and accessible.${detailMsg}`
+        );
+        err.status = 0;
+        err.statusText = 'Network Error';
+        err.url = url;
+        throw err;
+      }
+    } else {
+      console.warn(`[API Network Warning on ${options.method || 'GET'} ${url}]:`, netErr?.message || netErr);
+      const detailMsg = netErr?.message ? ` (${netErr.message})` : '';
+      const err: ApiError = new Error(
+        `Network Connection Error: The frontend cannot connect to the backend at "${url}". Please verify your backend server is running and accessible.${detailMsg}`
+      );
+      err.status = 0;
+      err.statusText = 'Network Error';
+      err.url = url;
+      throw err;
+    }
   }
 
   // If server automatically refreshed our token, store the new token immediately
@@ -201,9 +232,35 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     responseText = '';
   }
 
-  const contentType = response.headers.get('content-type') || '';
-  let data: any = null;
+  let contentType = response.headers.get('content-type') || '';
+  let status = response.status;
+  let isHtml = contentType.includes('text/html') || responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html');
 
+  // If external backend returned 502/503/504 or HTML error while running in preview/different host,
+  // attempt the local Express backend route as a fallback.
+  if (isDifferentHost && (status === 502 || status === 503 || status === 504 || (status >= 500 && isHtml) || (response.ok && isHtml))) {
+    try {
+      const localResponse = await fetch(apiPath, {
+        ...options,
+        headers,
+      });
+      const localText = await localResponse.text();
+      const localContentType = localResponse.headers.get('content-type') || '';
+      const localIsHtml = localContentType.includes('text/html') || localText.trim().startsWith('<!DOCTYPE') || localText.trim().startsWith('<html');
+
+      if (!localIsHtml || localResponse.ok) {
+        response = localResponse;
+        responseText = localText;
+        contentType = localContentType;
+        status = localResponse.status;
+        isHtml = localIsHtml;
+      }
+    } catch {
+      // Keep original response
+    }
+  }
+
+  let data: any = null;
   if (contentType.includes('application/json') || responseText.trim().startsWith('{') || responseText.trim().startsWith('[')) {
     try {
       data = JSON.parse(responseText);
@@ -211,9 +268,6 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       data = null;
     }
   }
-
-  const status = response.status;
-  const isHtml = contentType.includes('text/html') || responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html');
 
   // HTTP 401: Invalid credentials or expired session
   if (status === 401) {

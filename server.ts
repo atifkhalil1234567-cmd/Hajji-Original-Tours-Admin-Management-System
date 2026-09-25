@@ -42,6 +42,7 @@ async function startServer() {
     'http://www.hajjioriginaltours.com',
     'https://admin.hajjioriginaltours.com',
     'https://api.hajjioriginaltours.com',
+    'https://myc.hajjioriginaltours.com',
   ]);
 
   app.use((req, res, next) => {
