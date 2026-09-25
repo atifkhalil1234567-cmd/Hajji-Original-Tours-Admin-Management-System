@@ -113,6 +113,30 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
       params
     );
 
+    // Fetch linked hotels for all packages
+    const pkgIds = rawPackages.map((p: any) => p.id);
+    const hotelsByPkgId: Record<number, any[]> = {};
+    if (pkgIds.length > 0) {
+      try {
+        const placeholders = pkgIds.map(() => '?').join(',');
+        const hotelRows = await dbQuery(
+          `SELECT ph.*, h.name as hotel_name, h.city as hotel_city, h.star_rating, h.distance_meters, h.shuttle_available, h.address
+           FROM package_hotels ph
+           JOIN hotels h ON ph.hotel_id = h.id
+           WHERE ph.package_id IN (${placeholders})`,
+          pkgIds
+        );
+        for (const row of hotelRows) {
+          if (!hotelsByPkgId[row.package_id]) {
+            hotelsByPkgId[row.package_id] = [];
+          }
+          hotelsByPkgId[row.package_id].push(row);
+        }
+      } catch (hErr: any) {
+        console.warn('[Packages] Error querying package hotels:', hErr.message);
+      }
+    }
+
     // Normalize each package so frontend receives guaranteed consistent fields
     const packages = rawPackages.map((pkg: any) => {
       const isPublished =
@@ -122,19 +146,25 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
         pkg.status === 'active' ||
         pkg.status === true;
 
+      const desc = pkg.detailed_description || pkg.short_summary || pkg.short_description || pkg.description || '';
+
       return {
         ...pkg,
         status: isPublished ? 'published' : 'draft',
         raw_status: pkg.status,
         is_active: isPublished,
         category_type: pkg.package_type || 'umrah',
-        short_description: pkg.short_summary || pkg.detailed_description || pkg.short_description || '',
+        description: desc,
+        short_description: desc,
+        short_summary: pkg.short_summary || desc,
+        detailed_description: desc,
         starting_price: Number(pkg.starting_price) || 0,
         total_seats: Number(pkg.total_seats) || 50,
         booked_seats: Number(pkg.booked_seats) || 0,
         duration_days: Number(pkg.duration_days) || 14,
         gregorian_year: Number(pkg.gregorian_year) || 2026,
         category_name: pkg.category_name || 'General Package',
+        hotels: hotelsByPkgId[pkg.id] || [],
       };
     });
 
@@ -219,7 +249,7 @@ router.get('/:id', authenticate, async (req: AuthRequest, res: Response): Promis
     const exclusions = await dbQuery(`SELECT * FROM package_exclusions WHERE package_id = ? ORDER BY display_order ASC`, [actualId]);
     const services = await dbQuery(`SELECT * FROM package_services WHERE package_id = ?`, [actualId]);
     const hotels = await dbQuery(
-      `SELECT ph.*, h.name as hotel_name, h.city as hotel_city, h.star_rating
+      `SELECT ph.*, h.name as hotel_name, h.city as hotel_city, h.star_rating, h.distance_meters, h.shuttle_available, h.address
        FROM package_hotels ph
        JOIN hotels h ON ph.hotel_id = h.id
        WHERE ph.package_id = ?`,
@@ -233,6 +263,8 @@ router.get('/:id', authenticate, async (req: AuthRequest, res: Response): Promis
       pkg.status === 'active' ||
       pkg.status === true;
 
+    const desc = pkg.detailed_description || pkg.short_summary || pkg.short_description || pkg.description || '';
+
     res.json({
       success: true,
       data: {
@@ -240,7 +272,10 @@ router.get('/:id', authenticate, async (req: AuthRequest, res: Response): Promis
         status: isPublished ? 'published' : 'draft',
         raw_status: pkg.status,
         is_active: isPublished,
-        short_description: pkg.short_summary || pkg.detailed_description || pkg.short_description || '',
+        description: desc,
+        short_description: desc,
+        short_summary: pkg.short_summary || desc,
+        detailed_description: desc,
         starting_price: Number(pkg.starting_price) || 0,
         total_seats: Number(pkg.total_seats) || 50,
         booked_seats: Number(pkg.booked_seats) || 0,
@@ -283,12 +318,22 @@ router.post('/', authenticate, authorize('packages', 'manage'), async (req: Auth
       qurbani_included,
       short_summary,
       detailed_description,
+      description,
+      short_description,
       status,
+      hotel_ids,
+      hotels,
     } = req.body;
 
     const { currency_id: resolvedCurrencyId, currency: resolvedCurrency } = resolveCurrency(currency_id, currency);
 
     const generatedSlug = slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + Date.now().toString().slice(-4);
+
+    const finalDescription = detailed_description || description || short_description || short_summary || '';
+    const finalSummary = short_summary || short_description || finalDescription;
+    const finalPkgType = package_type || 'umrah';
+    const isHajj = finalPkgType === 'hajj' || finalPkgType === 'vip_hajj';
+    const finalHajjType = isHajj ? (hajj_type || 'non_shifting') : 'not_applicable';
 
     const result = await dbRun(
       `INSERT INTO packages (
@@ -297,11 +342,11 @@ router.post('/', authenticate, authorize('packages', 'manage'), async (req: Auth
         ziyarat_included, qurbani_included, short_summary, detailed_description, status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        category_id,
+        category_id || (finalPkgType === 'holiday' ? 4 : (finalPkgType === 'hajj' || finalPkgType === 'vip_hajj' ? 1 : 2)),
         title,
         generatedSlug,
-        package_type || 'umrah',
-        hajj_type || 'not_applicable',
+        finalPkgType,
+        finalHajjType,
         gregorian_year || 2026,
         duration_days || 14,
         origin_city || 'London',
@@ -313,11 +358,29 @@ router.post('/', authenticate, authorize('packages', 'manage'), async (req: Auth
         visa_included ? 1 : 0,
         ziyarat_included ? 1 : 0,
         qurbani_included ? 1 : 0,
-        short_summary || '',
-        detailed_description || '',
+        finalSummary,
+        finalDescription,
         status || 'published',
       ]
     );
+
+    const newPkgId = result.insertId;
+
+    // Explicit hotel linking: DO NOT automatically attach any hotel
+    // Only link hotels explicitly provided in req.body.hotel_ids or req.body.hotels
+    const hotelsToLink = Array.isArray(hotel_ids)
+      ? hotel_ids.map((id: any) => ({ hotel_id: id }))
+      : (Array.isArray(hotels) ? hotels : []);
+
+    for (const h of hotelsToLink) {
+      const hId = typeof h === 'object' ? Number(h.hotel_id || h.id) : Number(h);
+      if (hId && !isNaN(hId)) {
+        await dbRun(
+          `INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (?, ?, ?, ?)`,
+          [newPkgId, hId, Number(h.nights_count) || Math.floor(Number(duration_days || 14) / 2) || 7, h.meal_plan || 'Half Board']
+        );
+      }
+    }
 
     await logActivity(req.user!.id, 'packages', 'create', result.insertId, `Created package "${title}"`, req);
     res.json({ success: true, id: result.insertId, message: 'Package created successfully' });
@@ -348,10 +411,20 @@ router.put('/:id', authenticate, authorize('packages', 'manage'), async (req: Au
       qurbani_included,
       short_summary,
       detailed_description,
+      description,
+      short_description,
       status,
+      hotel_ids,
+      hotels,
     } = req.body;
 
     const { currency_id: resolvedCurrencyId, currency: resolvedCurrency } = resolveCurrency(currency_id, currency);
+
+    const finalDescription = detailed_description || description || short_description || short_summary || '';
+    const finalSummary = short_summary || short_description || finalDescription;
+    const finalPkgType = package_type || 'umrah';
+    const isHajj = finalPkgType === 'hajj' || finalPkgType === 'vip_hajj';
+    const finalHajjType = isHajj ? (hajj_type || 'non_shifting') : 'not_applicable';
 
     await dbRun(
       `UPDATE packages SET
@@ -361,10 +434,10 @@ router.put('/:id', authenticate, authorize('packages', 'manage'), async (req: Au
         short_summary = ?, detailed_description = ?, status = ?
        WHERE id = ?`,
       [
-        category_id,
+        category_id || 1,
         title,
-        package_type,
-        hajj_type,
+        finalPkgType,
+        finalHajjType,
         gregorian_year,
         duration_days,
         origin_city,
@@ -376,12 +449,30 @@ router.put('/:id', authenticate, authorize('packages', 'manage'), async (req: Au
         visa_included ? 1 : 0,
         ziyarat_included ? 1 : 0,
         qurbani_included ? 1 : 0,
-        short_summary,
-        detailed_description,
+        finalSummary,
+        finalDescription,
         status,
         pkgId,
       ]
     );
+
+    // Update package hotels if explicitly provided
+    if (hotel_ids !== undefined || hotels !== undefined) {
+      await dbRun(`DELETE FROM package_hotels WHERE package_id = ?`, [pkgId]);
+      const hotelsToLink = Array.isArray(hotel_ids)
+        ? hotel_ids.map((id: any) => ({ hotel_id: id }))
+        : (Array.isArray(hotels) ? hotels : []);
+
+      for (const h of hotelsToLink) {
+        const hId = typeof h === 'object' ? Number(h.hotel_id || h.id) : Number(h);
+        if (hId && !isNaN(hId)) {
+          await dbRun(
+            `INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (?, ?, ?, ?)`,
+            [pkgId, hId, Number(h.nights_count) || Math.floor(Number(duration_days || 14) / 2) || 7, h.meal_plan || 'Half Board']
+          );
+        }
+      }
+    }
 
     await logActivity(req.user!.id, 'packages', 'update', pkgId, `Updated package "${title}"`, req);
     res.json({ success: true, message: 'Package updated successfully' });

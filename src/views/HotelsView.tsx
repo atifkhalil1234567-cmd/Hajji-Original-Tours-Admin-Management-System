@@ -18,7 +18,7 @@ import { Modal } from '../components/common/Modal';
 export const HotelsView: React.FC = () => {
   const [hotels, setHotels] = useState<Hotel[]>([]);
   const [loading, setLoading] = useState(true);
-  const [cityFilter, setCityFilter] = useState<'all' | 'Makkah' | 'Madinah'>('all');
+  const [cityFilter, setCityFilter] = useState<'all' | 'Makkah' | 'Madinah' | 'Dubai'>('all');
 
   // Modals
   const [isHotelModalOpen, setIsHotelModalOpen] = useState(false);
@@ -29,7 +29,7 @@ export const HotelsView: React.FC = () => {
   const [hotelForm, setHotelForm] = useState({
     name: '',
     arabic_name: '',
-    city: 'Makkah' as 'Makkah' | 'Madinah',
+    city: 'Makkah' as 'Makkah' | 'Madinah' | 'Dubai' | 'Jeddah' | 'Riyadh' | string,
     star_rating: 5,
     distance_meters: 50,
     shuttle_available: 0,
@@ -118,20 +118,20 @@ export const HotelsView: React.FC = () => {
       </div>
 
       {/* City Filters */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
         <button
           onClick={() => setCityFilter('all')}
-          className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors ${
+          className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
             cityFilter === 'all'
               ? 'bg-amber-500 text-stone-950 font-bold'
               : 'bg-white border border-stone-200 text-stone-600 hover:bg-stone-50'
           }`}
         >
-          All Holy Cities ({hotels.length})
+          All Properties ({hotels.length})
         </button>
         <button
           onClick={() => setCityFilter('Makkah')}
-          className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors ${
+          className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
             cityFilter === 'Makkah'
               ? 'bg-amber-500 text-stone-950 font-bold'
               : 'bg-white border border-stone-200 text-stone-600 hover:bg-stone-50'
@@ -141,13 +141,23 @@ export const HotelsView: React.FC = () => {
         </button>
         <button
           onClick={() => setCityFilter('Madinah')}
-          className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors ${
+          className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
             cityFilter === 'Madinah'
               ? 'bg-amber-500 text-stone-950 font-bold'
               : 'bg-white border border-stone-200 text-stone-600 hover:bg-stone-50'
           }`}
         >
           Al Madinah Al Munawwarah ({hotels.filter((h) => h.city === 'Madinah').length})
+        </button>
+        <button
+          onClick={() => setCityFilter('Dubai')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
+            cityFilter === 'Dubai'
+              ? 'bg-amber-500 text-stone-950 font-bold'
+              : 'bg-white border border-stone-200 text-stone-600 hover:bg-stone-50'
+          }`}
+        >
+          Dubai ({hotels.filter((h) => h.city === 'Dubai').length})
         </button>
       </div>
 
@@ -168,7 +178,13 @@ export const HotelsView: React.FC = () => {
                     <div>
                       <div className="flex items-center gap-1.5 mb-1.5">
                         <Badge
-                          variant={hotel.city === 'Makkah' ? 'gold' : 'success'}
+                          variant={
+                            hotel.city === 'Makkah'
+                              ? 'gold'
+                              : hotel.city === 'Madinah'
+                              ? 'success'
+                              : 'info'
+                          }
                         >
                           {hotel.city}
                         </Badge>
@@ -188,13 +204,22 @@ export const HotelsView: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Haram Proximity Pill */}
-                    <div className="px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200 text-right shrink-0">
-                      <span className="text-xs font-bold text-amber-950 font-mono">
-                        {hotel.distance_meters}m
-                      </span>
-                      <p className="text-[10px] text-amber-800 font-medium">to Haram Courtyard</p>
-                    </div>
+                    {/* Haram Proximity vs Destination Pill */}
+                    {hotel.city === 'Makkah' || hotel.city === 'Madinah' ? (
+                      <div className="px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200 text-right shrink-0">
+                        <span className="text-xs font-bold text-amber-950 font-mono">
+                          {hotel.distance_meters}m
+                        </span>
+                        <p className="text-[10px] text-amber-800 font-medium">to Haram Courtyard</p>
+                      </div>
+                    ) : (
+                      <div className="px-2.5 py-1 rounded-xl bg-sky-50 border border-sky-200 text-right shrink-0">
+                        <span className="text-xs font-bold text-sky-950 font-mono">
+                          {hotel.city}
+                        </span>
+                        <p className="text-[10px] text-sky-800 font-medium">Destination Property</p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1.5 text-xs text-stone-500 mt-2">
@@ -310,6 +335,9 @@ export const HotelsView: React.FC = () => {
               >
                 <option value="Makkah">Makkah Al Mukarramah</option>
                 <option value="Madinah">Al Madinah Al Munawwarah</option>
+                <option value="Dubai">Dubai, UAE</option>
+                <option value="Jeddah">Jeddah</option>
+                <option value="Riyadh">Riyadh</option>
               </select>
             </div>
 
@@ -329,7 +357,9 @@ export const HotelsView: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold text-stone-700 mb-1">
-                Distance to Haram Courtyard (Meters)
+                {hotelForm.city === 'Makkah' || hotelForm.city === 'Madinah'
+                  ? 'Distance to Haram Courtyard (Meters)'
+                  : 'Distance to City Landmark / Beach (Meters)'}
               </label>
               <input
                 type="number"

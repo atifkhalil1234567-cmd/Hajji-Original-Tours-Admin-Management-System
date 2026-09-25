@@ -81,12 +81,16 @@ export interface Package {
   currency_id?: number;
   total_seats: number;
   booked_seats: number;
+  description?: string;
   short_description?: string;
+  short_summary?: string;
+  detailed_description?: string;
   featured_image?: string;
   status: 'draft' | 'published' | 'archived';
   is_featured: number;
   departures?: PackageDeparture[];
   hotels?: any[];
+  hotel_ids?: number[];
   itineraries?: any[];
   inclusions?: any[];
 }
@@ -107,12 +111,13 @@ export interface Hotel {
   id: number;
   name: string;
   arabic_name?: string;
-  city: 'Makkah' | 'Madinah' | 'Jeddah';
+  city: 'Makkah' | 'Madinah' | 'Dubai' | 'Jeddah' | 'Riyadh' | string;
   star_rating: number;
   distance_meters: number;
   shuttle_available: number;
   address: string;
   featured_image?: string;
+  description?: string;
   status: string;
   rooms?: HotelRoom[];
   facilities?: any[];

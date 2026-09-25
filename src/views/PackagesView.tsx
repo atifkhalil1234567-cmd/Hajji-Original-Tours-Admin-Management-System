@@ -14,9 +14,12 @@ import {
   Search,
   Filter,
   Power,
+  Building2,
+  Crown,
+  Check,
 } from 'lucide-react';
 import { api } from '../services/api';
-import { Package, PackageCategory } from '../types';
+import { Package, PackageCategory, Hotel } from '../types';
 import { Badge } from '../components/common/Badge';
 import { Modal } from '../components/common/Modal';
 import { CURRENCY_CODE_MAP, resolveCurrency, getCurrencySymbol } from '../utils/currency';
@@ -24,6 +27,7 @@ import { CURRENCY_CODE_MAP, resolveCurrency, getCurrencySymbol } from '../utils/
 export const PackagesView: React.FC = () => {
   const [packages, setPackages] = useState<Package[]>([]);
   const [categories, setCategories] = useState<PackageCategory[]>([]);
+  const [availableHotels, setAvailableHotels] = useState<Hotel[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -46,18 +50,19 @@ export const PackagesView: React.FC = () => {
   const [pkgForm, setPkgForm] = useState({
     title: '',
     category_id: 1,
-    package_type: 'vip_hajj',
-    hajj_type: 'non_shifting',
+    package_type: 'umrah',
+    hajj_type: 'not_applicable',
     gregorian_year: 2026,
-    duration_days: 18,
+    duration_days: 14,
     origin_city: 'London Heathrow',
-    destination_city: 'Jeddah / Madinah',
-    starting_price: 11500,
+    destination_city: '',
+    starting_price: 2500,
     currency: 'USD',
     currency_id: 1,
-    total_seats: 60,
+    total_seats: 50,
     status: 'published',
-    short_description: 'Luxury 5-Star front-row Haram hotels with VIP Mina air-conditioned tents and private GMC transport.',
+    short_description: '',
+    selectedHotelIds: [] as number[],
   });
 
   // New Departure Form State
@@ -92,6 +97,15 @@ export const PackagesView: React.FC = () => {
       } catch (catErr) {
         console.warn('[PackagesView] Categories loading failed:', catErr);
       }
+
+      try {
+        const hotelRes = await api.getHotels();
+        if (hotelRes && hotelRes.success && Array.isArray(hotelRes.data)) {
+          setAvailableHotels(hotelRes.data);
+        }
+      } catch (hotelErr) {
+        console.warn('[PackagesView] Hotels loading failed:', hotelErr);
+      }
     } catch (e: any) {
       console.error('[PackagesView] Error loading packages:', e);
       setFetchError(e.message || 'Failed to fetch packages from database');
@@ -108,19 +122,20 @@ export const PackagesView: React.FC = () => {
     setEditingPackage(null);
     setPkgForm({
       title: '',
-      category_id: 1,
-      package_type: 'vip_hajj',
-      hajj_type: 'non_shifting',
+      category_id: 2,
+      package_type: 'holiday',
+      hajj_type: 'not_applicable',
       gregorian_year: 2026,
-      duration_days: 18,
+      duration_days: 7,
       origin_city: 'London Heathrow',
-      destination_city: 'Jeddah / Madinah',
-      starting_price: 11500,
+      destination_city: 'Dubai',
+      starting_price: 1800,
       currency: 'USD',
       currency_id: 1,
-      total_seats: 60,
+      total_seats: 40,
       status: 'published',
-      short_description: 'Luxury 5-Star front-row Haram hotels with VIP Mina air-conditioned tents and private GMC transport.',
+      short_description: '',
+      selectedHotelIds: [], // NEVER automatically attach any hotel
     });
     setIsPackageModalOpen(true);
   };
@@ -128,21 +143,28 @@ export const PackagesView: React.FC = () => {
   const handleEditPackage = (pkg: Package) => {
     setEditingPackage(pkg);
     const { currency_id: cId, currency: cCode } = resolveCurrency(pkg.currency_id, pkg.currency);
+    const linkedIds = Array.isArray(pkg.hotels)
+      ? pkg.hotels.map((h: any) => h.hotel_id || h.id).filter(Boolean)
+      : [];
+    const desc = pkg.short_description || pkg.description || pkg.detailed_description || (pkg as any).short_summary || '';
+    const isHajj = pkg.package_type === 'hajj' || pkg.package_type === 'vip_hajj';
+
     setPkgForm({
       title: pkg.title,
       category_id: pkg.category_id || 1,
-      package_type: pkg.package_type || 'vip_hajj',
-      hajj_type: pkg.hajj_type || 'non_shifting',
+      package_type: pkg.package_type || 'umrah',
+      hajj_type: isHajj ? (pkg.hajj_type || 'non_shifting') : 'not_applicable',
       gregorian_year: pkg.gregorian_year || 2026,
       duration_days: pkg.duration_days || 14,
       origin_city: pkg.origin_city || 'London Heathrow',
-      destination_city: pkg.destination_city || 'Jeddah / Madinah',
+      destination_city: pkg.destination_city || '',
       starting_price: Number(pkg.starting_price) || 0,
       currency: cCode,
       currency_id: cId,
       total_seats: pkg.total_seats || 50,
       status: isPackageActive(pkg.status) ? 'published' : 'draft',
-      short_description: pkg.short_description || (pkg as any).short_summary || '',
+      short_description: desc,
+      selectedHotelIds: linkedIds,
     });
     setIsPackageModalOpen(true);
   };
@@ -185,10 +207,19 @@ export const PackagesView: React.FC = () => {
     e.preventDefault();
     try {
       const { currency_id: cId, currency: cCode } = resolveCurrency(pkgForm.currency_id, pkgForm.currency);
+      const isHajj = pkgForm.package_type === 'hajj' || pkgForm.package_type === 'vip_hajj';
+
       const payload = {
         ...pkgForm,
+        package_type: pkgForm.package_type,
+        hajj_type: isHajj ? pkgForm.hajj_type : 'not_applicable',
         currency: cCode,
         currency_id: cId,
+        short_summary: pkgForm.short_description,
+        detailed_description: pkgForm.short_description,
+        description: pkgForm.short_description,
+        short_description: pkgForm.short_description,
+        hotel_ids: pkgForm.selectedHotelIds,
       };
 
       if (editingPackage) {
@@ -207,6 +238,18 @@ export const PackagesView: React.FC = () => {
     } catch (err: any) {
       alert(err.message || 'Failed to save package');
     }
+  };
+
+  const toggleHotelSelection = (hotelId: number) => {
+    setPkgForm((prev) => {
+      const exists = prev.selectedHotelIds.includes(hotelId);
+      return {
+        ...prev,
+        selectedHotelIds: exists
+          ? prev.selectedHotelIds.filter((id) => id !== hotelId)
+          : [...prev.selectedHotelIds, hotelId],
+      };
+    });
   };
 
   const handleCreateDeparture = async (e: React.FormEvent) => {
@@ -243,8 +286,22 @@ export const PackagesView: React.FC = () => {
     const titleMatch = (pkg.title || '').toLowerCase().includes(search.toLowerCase());
     const originMatch = (pkg.origin_city || '').toLowerCase().includes(search.toLowerCase());
     const matchesSearch = !search || titleMatch || originMatch;
-    const matchesCategory =
-      selectedCategory === 'all' || pkg.package_type === selectedCategory;
+    
+    let matchesCategory = selectedCategory === 'all';
+    if (!matchesCategory) {
+      if (selectedCategory === 'hajj') {
+        matchesCategory = pkg.package_type === 'hajj' || pkg.package_type === 'vip_hajj';
+      } else if (selectedCategory === 'vip_hajj') {
+        matchesCategory = pkg.package_type === 'vip_hajj';
+      } else if (selectedCategory === 'umrah') {
+        matchesCategory = pkg.package_type === 'umrah' || pkg.package_type === 'ramadan_umrah';
+      } else if (selectedCategory === 'holiday') {
+        matchesCategory = pkg.package_type === 'holiday' || pkg.package_type === 'other';
+      } else {
+        matchesCategory = pkg.package_type === selectedCategory;
+      }
+    }
+
     const matchesStatus =
       statusFilter === 'all' ||
       (statusFilter === 'published'
@@ -355,25 +412,25 @@ export const PackagesView: React.FC = () => {
           <span className="text-[11px] font-semibold text-stone-400 mr-1 shrink-0">
             Type:
           </span>
-          {['all', 'vip_hajj', 'hajj', 'umrah', 'ramadan_umrah'].map((cat) => (
+          {['all', 'hajj', 'vip_hajj', 'umrah', 'holiday'].map((cat) => (
             <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
               className={`px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
                 selectedCategory === cat
-                  ? 'bg-amber-500 text-stone-950'
+                  ? 'bg-amber-500 text-stone-950 font-bold'
                   : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
               }`}
             >
               {cat === 'all'
                 ? 'All Types'
+                : cat === 'hajj'
+                ? 'Hajj Packages'
                 : cat === 'vip_hajj'
                 ? 'VIP 5★ Hajj'
-                : cat === 'hajj'
-                ? 'Standard Hajj'
                 : cat === 'umrah'
-                ? 'Umrah Express'
-                : 'Ramadan Umrah'}
+                ? 'Umrah Packages'
+                : 'Holiday / Other Tours'}
             </button>
           ))}
         </div>
@@ -427,10 +484,20 @@ export const PackagesView: React.FC = () => {
                       <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
                         <Badge
                           variant={
-                            pkg.package_type.includes('hajj') ? 'gold' : 'info'
+                            pkg.package_type.includes('hajj')
+                              ? 'gold'
+                              : pkg.package_type.includes('holiday') || pkg.package_type === 'other'
+                              ? 'info'
+                              : 'success'
                           }
                         >
-                          {pkg.package_type.replace('_', ' ').toUpperCase()}
+                          {pkg.package_type === 'holiday'
+                            ? 'HOLIDAY / TOUR'
+                            : pkg.package_type === 'vip_hajj'
+                            ? 'VIP 5★ HAJJ'
+                            : pkg.package_type === 'ramadan_umrah'
+                            ? 'RAMADAN UMRAH'
+                            : pkg.package_type.replace('_', ' ').toUpperCase()}
                         </Badge>
                         <Badge variant="default">{pkg.duration_days} Days</Badge>
                         {isOn ? (
@@ -527,11 +594,71 @@ export const PackagesView: React.FC = () => {
                       </button>
                     </div>
 
+                    {/* Linked Hotels Section */}
+                    <div className="pt-2 border-t border-stone-100">
+                      <div className="flex items-center justify-between text-[11px] font-semibold text-stone-500 mb-1.5">
+                        <span className="flex items-center gap-1">
+                          <Building2 className="w-3.5 h-3.5 text-stone-400" />
+                          <span>Linked Accommodations:</span>
+                        </span>
+                        <span className="text-[10px] text-stone-400">
+                          {pkg.hotels && pkg.hotels.length > 0 ? `${pkg.hotels.length} Hotel${pkg.hotels.length > 1 ? 's' : ''}` : 'None'}
+                        </span>
+                      </div>
+                      {pkg.hotels && pkg.hotels.length > 0 ? (
+                        <div className="space-y-1.5">
+                          {pkg.hotels.map((h: any, idx: number) => {
+                            const isHolyCity = h.hotel_city === 'Makkah' || h.hotel_city === 'Madinah';
+                            const isHajjOrUmrah = pkg.package_type.includes('hajj') || pkg.package_type.includes('umrah');
+                            const showHaramProximity = isHajjOrUmrah && isHolyCity;
+
+                            return (
+                              <div
+                                key={idx}
+                                className="px-2.5 py-1.5 bg-stone-50 rounded-lg border border-stone-200/80 flex items-center justify-between text-xs"
+                              >
+                                <div className="min-w-0 pr-2">
+                                  <div className="font-semibold text-stone-800 text-[11px] truncate">
+                                    {h.hotel_name || h.name}
+                                  </div>
+                                  <div className="text-[10px] text-stone-500 flex items-center gap-1.5">
+                                    <span className="font-medium text-amber-700">{h.hotel_city || h.city}</span>
+                                    <span>•</span>
+                                    <span>{h.star_rating || 5}★</span>
+                                    {h.nights_count && (
+                                      <>
+                                        <span>•</span>
+                                        <span>{h.nights_count} Nights</span>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                                {showHaramProximity ? (
+                                  <span className="shrink-0 px-2 py-0.5 rounded-md bg-amber-100/80 text-amber-900 border border-amber-200 text-[10px] font-bold">
+                                    {h.distance_meters || 50}m to Haram
+                                  </span>
+                                ) : (
+                                  <span className="shrink-0 px-2 py-0.5 rounded-md bg-sky-50 text-sky-800 border border-sky-200 text-[10px] font-bold">
+                                    {h.hotel_city || h.city || 'Holiday'} Property
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-stone-400 italic">No hotels attached</p>
+                      )}
+                    </div>
+
                     {/* Description preview */}
                     {pkg.short_description && (
-                      <p className="text-[11px] text-stone-500 line-clamp-2 mt-2">
-                        {pkg.short_description}
-                      </p>
+                      <div className="pt-2 border-t border-stone-100">
+                        <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider block mb-0.5">Description:</span>
+                        <p className="text-[11px] text-stone-600 line-clamp-3 leading-relaxed">
+                          {pkg.short_description}
+                        </p>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -663,34 +790,69 @@ export const PackagesView: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold text-stone-700 mb-1">
-                Package Type
+                Package Type *
               </label>
               <select
                 value={pkgForm.package_type}
-                onChange={(e) => setPkgForm({ ...pkgForm, package_type: e.target.value })}
-                className="w-full px-3 py-2 text-xs border border-stone-300 rounded-xl"
+                onChange={(e) => {
+                  const newType = e.target.value;
+                  const isHajj = newType === 'hajj' || newType === 'vip_hajj';
+                  setPkgForm({
+                    ...pkgForm,
+                    package_type: newType,
+                    hajj_type: isHajj
+                      ? (pkgForm.hajj_type === 'not_applicable' ? 'non_shifting' : pkgForm.hajj_type)
+                      : 'not_applicable',
+                  });
+                }}
+                className="w-full px-3 py-2 text-xs border border-stone-300 rounded-xl bg-white"
               >
-                <option value="vip_hajj">VIP 5-Star Hajj</option>
-                <option value="hajj">Standard Shifting Hajj</option>
-                <option value="umrah">Classic Umrah</option>
-                <option value="ramadan_umrah">Ramadan Special Umrah</option>
+                <option value="hajj">Hajj Package</option>
+                <option value="umrah">Umrah Package</option>
+                <option value="holiday">Holiday / Other Tour</option>
+                {pkgForm.package_type === 'vip_hajj' && <option value="vip_hajj">VIP 5★ Executive Hajj</option>}
+                {pkgForm.package_type === 'ramadan_umrah' && <option value="ramadan_umrah">Ramadan Umrah</option>}
               </select>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-stone-700 mb-1">
-                Hajj Shifting Type
-              </label>
-              <select
-                value={pkgForm.hajj_type}
-                onChange={(e) => setPkgForm({ ...pkgForm, hajj_type: e.target.value })}
-                className="w-full px-3 py-2 text-xs border border-stone-300 rounded-xl"
-              >
-                <option value="non_shifting">Non-Shifting (Direct Haram Accommodation)</option>
-                <option value="shifting">Shifting (Aziziyah / Mina Shifting)</option>
-                <option value="not_applicable">Not Applicable (Umrah)</option>
-              </select>
-            </div>
+            {/* Hajj-Only Specific Options: Appears ONLY for Hajj Packages */}
+            {(pkgForm.package_type === 'hajj' || pkgForm.package_type === 'vip_hajj') && (
+              <div className="sm:col-span-2 p-3 bg-amber-50/70 border border-amber-200/80 rounded-xl space-y-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-950">
+                  <Crown className="w-4 h-4 text-amber-600" />
+                  <span>Hajj Pilgrimage Specific Configurations (Hajj Only)</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-700 mb-1">
+                      Hajj Shifting Type *
+                    </label>
+                    <select
+                      value={pkgForm.hajj_type}
+                      onChange={(e) => setPkgForm({ ...pkgForm, hajj_type: e.target.value })}
+                      className="w-full px-3 py-2 text-xs border border-stone-300 rounded-xl bg-white"
+                    >
+                      <option value="non_shifting">Non-Shifting (Direct Haram Accommodation)</option>
+                      <option value="shifting">Shifting (Aziziyah / Mina Shifting)</option>
+                      <option value="express">Express Hajj (Short Duration)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-700 mb-1">
+                      Hajj VIP Category
+                    </label>
+                    <select
+                      value={pkgForm.package_type}
+                      onChange={(e) => setPkgForm({ ...pkgForm, package_type: e.target.value })}
+                      className="w-full px-3 py-2 text-xs border border-stone-300 rounded-xl bg-white"
+                    >
+                      <option value="hajj">Standard Hajj Package</option>
+                      <option value="vip_hajj">VIP 5-Star Executive Hajj</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-semibold text-stone-700 mb-1">
@@ -698,7 +860,7 @@ export const PackagesView: React.FC = () => {
               </label>
               <input
                 type="number"
-                min="5"
+                min="3"
                 max="45"
                 value={pkgForm.duration_days}
                 onChange={(e) => setPkgForm({ ...pkgForm, duration_days: Number(e.target.value) })}
@@ -742,7 +904,7 @@ export const PackagesView: React.FC = () => {
                 </select>
                 <input
                   type="number"
-                  min="100"
+                  min="50"
                   value={pkgForm.starting_price}
                   onChange={(e) => setPkgForm({ ...pkgForm, starting_price: Number(e.target.value) })}
                   className="w-full px-3 py-2 text-xs text-stone-900 focus:outline-hidden"
@@ -760,19 +922,105 @@ export const PackagesView: React.FC = () => {
                 value={pkgForm.origin_city}
                 onChange={(e) => setPkgForm({ ...pkgForm, origin_city: e.target.value })}
                 className="w-full px-3 py-2 text-xs border border-stone-300 rounded-xl"
+                placeholder="e.g. London Heathrow, Manchester, Birmingham"
               />
+            </div>
+
+            {/* Explicit Hotel Linking Section */}
+            <div className="sm:col-span-2 p-3 bg-stone-50 border border-stone-200 rounded-xl space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-xs font-bold text-stone-800">
+                    Linked Hotel Accommodations (Package-Specific)
+                  </label>
+                  <p className="text-[11px] text-stone-500">
+                    {pkgForm.package_type === 'holiday'
+                      ? 'Explicitly select destination hotel(s) (e.g. Dubai hotel for Dubai Holiday). Holiday packages will not inherit Makkah/Madinah Haram proximity.'
+                      : 'Hotels must be explicitly linked to this individual package. No hotel is attached automatically.'}
+                  </p>
+                </div>
+                <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200">
+                  {pkgForm.selectedHotelIds.length} Linked
+                </span>
+              </div>
+
+              {availableHotels.length === 0 ? (
+                <p className="text-xs text-stone-400 italic">No hotels found in directory.</p>
+              ) : (
+                <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                  {availableHotels.map((hotel) => {
+                    const isSelected = pkgForm.selectedHotelIds.includes(hotel.id);
+                    const isHolyCity = hotel.city === 'Makkah' || hotel.city === 'Madinah';
+                    const isHolidayPkg = pkgForm.package_type === 'holiday';
+
+                    return (
+                      <div
+                        key={hotel.id}
+                        onClick={() => toggleHotelSelection(hotel.id)}
+                        className={`p-2.5 rounded-xl border text-xs cursor-pointer flex items-center justify-between transition-colors ${
+                          isSelected
+                            ? 'bg-amber-50/70 border-amber-300 text-stone-900 shadow-xs'
+                            : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {}} // parent onClick handles toggle
+                            className="w-4 h-4 rounded-md text-amber-600 border-stone-300 focus:ring-amber-500 cursor-pointer"
+                          />
+                          <div className="min-w-0">
+                            <div className="font-semibold truncate">{hotel.name}</div>
+                            <div className="text-[11px] text-stone-500 flex items-center gap-1.5">
+                              <span className="font-medium text-amber-700">{hotel.city}</span>
+                              <span>•</span>
+                              <span>{hotel.star_rating}★</span>
+                              {isHolyCity && !isHolidayPkg ? (
+                                <>
+                                  <span>•</span>
+                                  <span>{hotel.distance_meters}m to Haram</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span>•</span>
+                                  <span>{hotel.city} Property</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
+                            isSelected
+                              ? 'bg-amber-500 text-stone-950'
+                              : 'bg-stone-100 text-stone-500'
+                          }`}
+                        >
+                          {isSelected ? 'Attached' : '+ Attach'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-stone-700 mb-1">
-                Overview & Description
+                Overview & Description *
               </label>
               <textarea
-                rows={3}
+                rows={4}
+                required
                 value={pkgForm.short_description}
                 onChange={(e) => setPkgForm({ ...pkgForm, short_description: e.target.value })}
-                className="w-full px-3 py-2 text-xs border border-stone-300 rounded-xl"
+                placeholder="Enter detailed package overview, hotel arrangements, flight schedules, meal plans, and inclusions..."
+                className="w-full px-3 py-2 text-xs border border-stone-300 rounded-xl focus:ring-2 focus:ring-amber-500/40"
               />
+              <p className="text-[11px] text-stone-400 mt-1">
+                Description persists in database and remains visible across Save → Reload → Edit.
+              </p>
             </div>
           </div>
 

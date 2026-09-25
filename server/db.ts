@@ -96,23 +96,26 @@ export async function initDatabase(): Promise<DbStatus> {
       isUsingMySQL = false;
       mysqlPool = null;
       lastMySQLConnectionError = err.message || 'MySQL connection error';
-      console.error(`[DB Error] Remote MySQL (${host}:${port}/${database}) returned: ${lastMySQLConnectionError}`);
+      console.warn(`[DB Warning] Remote MySQL (${host}:${port}/${database}) unavailable: ${lastMySQLConnectionError}`);
 
-      // When MySQL environment variables are configured, DO NOT fall back to SQLite. Fail clearly.
-      return {
-        connected: false,
-        engine: 'mysql',
-        database,
-        host: `${host}:${port}`,
-        tablesCount: 0,
-        message: `Production MySQL connection failed: ${lastMySQLConnectionError}`,
-        lastError: lastMySQLConnectionError,
-        isConfiguredForMySQL: true,
-      };
+      // When in production environment, fail clearly
+      if (isProductionEnv()) {
+        return {
+          connected: false,
+          engine: 'mysql',
+          database,
+          host: `${host}:${port}`,
+          tablesCount: 0,
+          message: `Production MySQL connection failed: ${lastMySQLConnectionError}`,
+          lastError: lastMySQLConnectionError,
+          isConfiguredForMySQL: true,
+        };
+      }
+      console.log('[DB] Non-production environment: activating SQLite relational engine fallback.');
     }
   }
 
-  // Fallback to SQLite using sql.js ONLY for local development without MySQL configured
+  // Fallback to SQLite using sql.js for local development
   try {
     const SQL = await initSqlJs();
     let needsBootstrap = false;
@@ -175,6 +178,82 @@ export async function initDatabase(): Promise<DbStatus> {
         for (const [name, icon] of defaultFacilities) {
           sqliteDb.run("INSERT OR IGNORE INTO hotel_facilities (name, icon) VALUES (?, ?);", [name, icon]);
         }
+      }
+
+      // Ensure Dubai hotels exist in hotels table
+      try {
+        const dubaiCheck = sqliteDb.exec("SELECT COUNT(*) as c FROM hotels WHERE city = 'Dubai';");
+        const dubaiCount = dubaiCheck[0]?.values[0]?.[0] || 0;
+        if (dubaiCount === 0) {
+          sqliteDb.run(
+            `INSERT INTO hotels (name, city, star_rating, distance_meters, shuttle_available, address, status, description)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              'Atlantis, The Palm Dubai',
+              'Dubai',
+              5,
+              500,
+              1,
+              'Crescent Rd - The Palm Jumeirah - Dubai - United Arab Emirates',
+              'active',
+              'Iconic luxury 5-star resort on the Palm Jumeirah with private beaches and world-class amenities.',
+            ]
+          );
+          sqliteDb.run(
+            `INSERT INTO hotels (name, city, star_rating, distance_meters, shuttle_available, address, status, description)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              'JW Marriott Marquis Hotel Dubai',
+              'Dubai',
+              5,
+              200,
+              1,
+              'Sheikh Zayed Rd - Business Bay - Dubai - United Arab Emirates',
+              'active',
+              'Spectacular 5-star luxury twin-tower hotel in central Business Bay near Dubai Mall and Burj Khalifa.',
+            ]
+          );
+        }
+      } catch (dubaiErr) {
+        console.warn('[DB] Dubai hotels seeding notice:', dubaiErr);
+      }
+
+      // Ensure Holiday & Other Tours category exists
+      try {
+        const holidayCatCheck = sqliteDb.exec("SELECT COUNT(*) as c FROM package_categories WHERE type = 'holiday' OR slug = 'holiday-other-tours';");
+        const holidayCatCount = holidayCatCheck[0]?.values[0]?.[0] || 0;
+        if (holidayCatCount === 0) {
+          sqliteDb.run(
+            `INSERT INTO package_categories (name, slug, type, description, status)
+             VALUES (?, ?, ?, ?, ?)`,
+            ['Holiday & Other Tours', 'holiday-other-tours', 'holiday', 'Exclusive holiday getaways, city tours, and international vacation packages.', 'active']
+          );
+        }
+      } catch (catErr) {
+        console.warn('[DB] Holiday category notice:', catErr);
+      }
+
+      // Ensure seed packages have descriptions and seed package_hotels
+      try {
+        sqliteDb.run("UPDATE packages SET short_summary = 'Exclusive 5-Star front-row Haram accommodation in Makkah & Madinah with VIP Mina air-conditioned tents and private GMC transport.', detailed_description = 'Experience an unforgettable spiritual Hajj pilgrimage with dedicated guidance, luxury hospitality, and comprehensive round-trip flight arrangements.' WHERE id = 1 AND (short_summary IS NULL OR short_summary = '');");
+        sqliteDb.run("UPDATE packages SET short_summary = 'Complete 10-day spring spiritual Umrah journey featuring luxury hotels steps from the holy mosques in Makkah and Madinah.', detailed_description = 'All-inclusive Umrah package featuring express visa processing, guided religious tours of historic sites, and 24/7 dedicated ground assistance.' WHERE id = 2 AND (short_summary IS NULL OR short_summary = '');");
+        sqliteDb.run("UPDATE packages SET short_summary = 'Spend the most blessed last ten nights of Ramadan in the holy sanctuaries of Makkah and Madinah with full Taraweeh access.', detailed_description = 'Witness the spiritual pinnacle of the year with guaranteed front-row Haram views, daily suhoor and iftar arrangements, and experienced group leaders.' WHERE id = 3 AND (short_summary IS NULL OR short_summary = '');");
+
+        const pkhCheck = sqliteDb.exec("SELECT COUNT(*) as c FROM package_hotels;");
+        const pkhCount = pkhCheck[0]?.values[0]?.[0] || 0;
+        if (pkhCount === 0) {
+          // Pkg 1: Hajj -> Fairmont Makkah (1) & Dar Al Taqwa Madinah (2)
+          sqliteDb.run("INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (1, 1, 10, 'Full Board');");
+          sqliteDb.run("INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (1, 2, 8, 'Full Board');");
+          // Pkg 2: Umrah -> Swissôtel Makkah (3) & Oberoi Madinah (4)
+          sqliteDb.run("INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (2, 3, 5, 'Half Board');");
+          sqliteDb.run("INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (2, 4, 5, 'Half Board');");
+          // Pkg 3: Ramadan Umrah -> Fairmont Makkah (1) & Oberoi Madinah (4)
+          sqliteDb.run("INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (3, 1, 8, 'Half Board');");
+          sqliteDb.run("INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (3, 4, 6, 'Half Board');");
+        }
+      } catch (pkgHotelsErr) {
+        console.warn('[DB] Seed package hotels notice:', pkgHotelsErr);
       }
 
       // Ensure customer approval & role assignment workflow columns exist
@@ -306,12 +385,12 @@ export async function dbQuery<T = any>(sql: string, params: any[] = []): Promise
   }
 
   const hasMySQLConfig = isMySQLConfigured();
-  if (hasMySQLConfig) {
-    // Production MySQL is configured: never run on SQLite fallback
+  if (hasMySQLConfig && isProductionEnv()) {
+    // Production MySQL is configured: never run on SQLite fallback in production
     throw new Error(`Production MySQL is unavailable: ${lastMySQLConnectionError || 'Connection not established'}`);
   }
 
-  // SQLite fallback ONLY for local development without MySQL config
+  // SQLite fallback for local development or non-production environment
   if (!sqliteDb) {
     await initDatabase();
   }
@@ -351,12 +430,12 @@ export async function dbRun(sql: string, params: any[] = []): Promise<{ insertId
   }
 
   const hasMySQLConfig = isMySQLConfigured();
-  if (hasMySQLConfig) {
-    // Production MySQL is configured: never run on SQLite fallback
+  if (hasMySQLConfig && isProductionEnv()) {
+    // Production MySQL is configured: never run on SQLite fallback in production
     throw new Error(`Production MySQL is unavailable: ${lastMySQLConnectionError || 'Connection not established'}`);
   }
 
-  // SQLite fallback ONLY for local development without MySQL config
+  // SQLite fallback for local development or non-production environment
   if (!sqliteDb) {
     await initDatabase();
   }
@@ -406,20 +485,22 @@ export async function getDbStatus(): Promise<DbStatus> {
       };
     }
 
-    // Production MySQL configured but not connected: report clear failure, NOT sqlite_fallback
-    return {
-      connected: false,
-      engine: 'mysql',
-      database,
-      host: `${host}:${port}`,
-      tablesCount: 0,
-      message: `Production MySQL connection failed: ${lastMySQLConnectionError || 'Connection not established'}`,
-      lastError: lastMySQLConnectionError || 'Connection not established',
-      isConfiguredForMySQL: true,
-    };
+    if (isProductionEnv()) {
+      // In production environment, report clear MySQL failure
+      return {
+        connected: false,
+        engine: 'mysql',
+        database,
+        host: `${host}:${port}`,
+        tablesCount: 0,
+        message: `Production MySQL connection failed: ${lastMySQLConnectionError || 'Connection not established'}`,
+        lastError: lastMySQLConnectionError || 'Connection not established',
+        isConfiguredForMySQL: true,
+      };
+    }
   }
 
-  // Local development SQLite fallback ONLY when MySQL is not configured
+  // Local development SQLite fallback
   let tablesCount = 38;
   if (sqliteDb) {
     try {

@@ -410,7 +410,7 @@ export const CustomerDashboardView: React.FC<CustomerDashboardViewProps> = ({ cu
         {activeTab === 'packages' && (
           <section className="space-y-4">
             <div>
-              <h2 className="text-lg font-bold text-white font-serif">Featured Hajj & Umrah Packages</h2>
+              <h2 className="text-lg font-bold text-white font-serif">Featured Packages & Tours</h2>
               <p className="text-xs text-stone-400">Curated packages with verified 5-star hotels, luxury transport, and guided spiritual mentors.</p>
             </div>
 
@@ -434,7 +434,11 @@ export const CustomerDashboardView: React.FC<CustomerDashboardViewProps> = ({ cu
                       </div>
                     )}
                     <span className="absolute top-3 right-3 px-2.5 py-1 rounded-lg bg-stone-950/80 backdrop-blur-md border border-stone-800 text-[10px] uppercase font-bold tracking-wider text-amber-400">
-                      {pkg.package_type || 'Umrah'}
+                      {pkg.package_type === 'holiday'
+                        ? 'Holiday Tour'
+                        : pkg.package_type === 'vip_hajj'
+                        ? 'VIP Hajj'
+                        : pkg.package_type || 'Umrah'}
                     </span>
                   </div>
 
@@ -619,8 +623,8 @@ export const CustomerDashboardView: React.FC<CustomerDashboardViewProps> = ({ cu
 
                     <div className="bg-stone-900/90 border border-amber-500/20 rounded-2xl p-4">
                       <div className="text-xs font-bold text-amber-400 uppercase tracking-wider mb-1">Chauffeur Service</div>
-                      <div className="text-sm font-semibold text-white">Private GMC Yukon Haram Transfers</div>
-                      <p className="text-[11px] text-stone-400 mt-1">Door-to-door dedicated transport between airport, Clock Tower, and Haram.</p>
+                      <div className="text-sm font-semibold text-white">Private GMC Yukon Dedicated Transfers</div>
+                      <p className="text-[11px] text-stone-400 mt-1">Door-to-door dedicated transport between airport, reserved hotel accommodations, and destinations.</p>
                       <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
                         <Check className="w-3.5 h-3.5" /> Priority Dispatch
                       </div>
@@ -740,7 +744,7 @@ export const CustomerDashboardView: React.FC<CustomerDashboardViewProps> = ({ cu
                     </div>
                     <div className="bg-stone-850 p-4 rounded-2xl border border-stone-800">
                       <h4 className="text-sm font-bold text-white mb-1">Hotel Rooming Block</h4>
-                      <p className="text-xs text-stone-400 mb-3">Makkah Clock Tower & Madinah Central Area room assignments and keycard readiness.</p>
+                      <p className="text-xs text-stone-400 mb-3">Reserved property room allocations and keycard readiness.</p>
                       <span className="text-xs font-semibold text-cyan-400">Direct Hotel Vouchers</span>
                     </div>
                     <div className="bg-stone-850 p-4 rounded-2xl border border-stone-800">

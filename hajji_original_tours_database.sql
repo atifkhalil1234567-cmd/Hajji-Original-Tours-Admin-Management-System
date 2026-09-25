@@ -292,7 +292,7 @@ CREATE TABLE `packages` (
   `category_id` INT UNSIGNED NOT NULL,
   `title` VARCHAR(200) NOT NULL,
   `slug` VARCHAR(220) NOT NULL UNIQUE,
-  `package_type` ENUM('hajj', 'umrah', 'ziyarat', 'ramadan_umrah', 'vip_hajj') NOT NULL,
+  `package_type` ENUM('hajj', 'umrah', 'holiday', 'ziyarat', 'ramadan_umrah', 'vip_hajj', 'other') NOT NULL,
   `hajj_type` ENUM('shifting', 'non_shifting', 'express', 'not_applicable') DEFAULT 'not_applicable',
   `hijri_year` INT NULL,
   `gregorian_year` INT NOT NULL DEFAULT 2026,
@@ -402,7 +402,7 @@ CREATE TABLE `package_images` (
 CREATE TABLE `hotels` (
   `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   `name` VARCHAR(150) NOT NULL,
-  `city` ENUM('Makkah', 'Madinah', 'Jeddah', 'Riyadh') NOT NULL,
+  `city` ENUM('Makkah', 'Madinah', 'Dubai', 'Jeddah', 'Riyadh') NOT NULL,
   `star_rating` TINYINT NOT NULL DEFAULT 5,
   `distance_meters` INT DEFAULT 150,
   `shuttle_available` TINYINT(1) DEFAULT 0,
@@ -937,7 +937,8 @@ INSERT INTO `site_settings` (`site_name`, `tagline`, `email`, `phone`, `whatsapp
 INSERT INTO `package_categories` (`id`, `name`, `slug`, `type`, `description`) VALUES
 (1, 'VIP Hajj Packages', 'vip-hajj-packages', 'hajj', 'Premium 5-Star front-row Haram hotels with luxury shifting tents in Mina.'),
 (2, 'Classic Umrah Packages', 'classic-umrah-packages', 'umrah', 'Comprehensive all-inclusive Umrah packages with full visa processing and guided ziyarats.'),
-(3, 'Ramadan Special Umrah', 'ramadan-special-umrah', 'ramadan_umrah', 'Experience the blessed last 10 days of Ramadan facing the holy Kaaba.');
+(3, 'Ramadan Special Umrah', 'ramadan-special-umrah', 'ramadan_umrah', 'Experience the blessed last 10 days of Ramadan facing the holy Kaaba.'),
+(4, 'Holiday & Other Tours', 'holiday-other-tours', 'holiday', 'Exclusive holiday getaways, city tours, and international vacation packages.');
 
 -- Seed Packages
 INSERT INTO `packages` (`id`, `category_id`, `title`, `slug`, `package_type`, `hajj_type`, `gregorian_year`, `duration_days`, `origin_city`, `starting_price`, `currency`, `total_seats`, `booked_seats`, `status`) VALUES
@@ -957,7 +958,9 @@ INSERT INTO `hotels` (`id`, `name`, `city`, `star_rating`, `distance_meters`, `s
 (1, 'Fairmont Makkah Clock Royal Tower', 'Makkah', 5, 50, 0, 'King Abdulaziz Endowment, Abraj Al Bait, Makkah', 'active'),
 (2, 'Dar Al Taqwa Hotel Madinah', 'Madinah', 5, 30, 0, 'Opposite Holy Prophet Mosque North Courtyard, Madinah', 'active'),
 (3, 'Swissôtel Makkah', 'Makkah', 5, 80, 0, 'Abraj Al Bait Complex, Makkah', 'active'),
-(4, 'The Oberoi Madinah', 'Madinah', 5, 40, 0, 'Northern Central Area, Madinah', 'active');
+(4, 'The Oberoi Madinah', 'Madinah', 5, 40, 0, 'Northern Central Area, Madinah', 'active'),
+(5, 'Atlantis, The Palm Dubai', 'Dubai', 5, 500, 1, 'Crescent Rd - The Palm Jumeirah - Dubai - United Arab Emirates', 'active'),
+(6, 'JW Marriott Marquis Hotel Dubai', 'Dubai', 5, 200, 1, 'Sheikh Zayed Rd - Business Bay - Dubai - United Arab Emirates', 'active');
 
 -- Seed Hotel Rooms
 INSERT INTO `hotel_rooms` (`id`, `hotel_id`, `room_name`, `room_type`, `view_type`, `capacity_adults`) VALUES
