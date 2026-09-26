@@ -26,7 +26,8 @@ export function isProductionEnv(): boolean {
   return (
     process.env.NODE_ENV === 'production' ||
     Boolean(typeof __filename !== 'undefined' && (__filename.endsWith('.cjs') || __filename.includes('dist'))) ||
-    Boolean(process.argv[1] && (process.argv[1].endsWith('.cjs') || process.argv[1].includes('dist')))
+    Boolean(process.argv[1] && (process.argv[1].endsWith('.cjs') || process.argv[1].includes('dist') || process.argv[1].endsWith('server.js') || process.argv[1].endsWith('app.js'))) ||
+    Boolean(process.env.PORT && isNaN(Number(process.env.PORT)))
   );
 }
 
@@ -177,6 +178,14 @@ export async function initDatabase(): Promise<DbStatus> {
         hostsToTry.push('127.0.0.1');
       } else if (config.host === '127.0.0.1' && !hostsToTry.includes('localhost')) {
         hostsToTry.push('localhost');
+      } else {
+        // If a remote hostname was specified, also append localhost and 127.0.0.1 for Hostinger local DB fallback
+        if (!hostsToTry.includes('localhost')) {
+          hostsToTry.push('localhost');
+        }
+        if (!hostsToTry.includes('127.0.0.1')) {
+          hostsToTry.push('127.0.0.1');
+        }
       }
     }
 

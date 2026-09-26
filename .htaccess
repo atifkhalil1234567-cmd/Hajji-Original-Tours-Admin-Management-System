@@ -10,9 +10,13 @@
   RewriteCond %{REQUEST_FILENAME} -d
   RewriteRule ^ - [L]
 
-  # 2. Prevent API requests from being rewritten to index.html
+  # 2. Prevent API requests from being rewritten to index.html and proxy to live backend
+  <IfModule mod_ssl.c>
+    SSLProxyEngine on
+  </IfModule>
+
   RewriteCond %{REQUEST_URI} ^/api [NC]
-  RewriteRule ^api/(.*)$ http://127.0.0.1:3000/api/$1 [P,L]
+  RewriteRule ^api/(.*)$ https://api.hajjioriginaltours.com/api/$1 [P,L]
 
   # 3. Single Page Application (SPA) route fallback
   RewriteCond %{REQUEST_URI} !^/api

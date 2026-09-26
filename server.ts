@@ -26,7 +26,9 @@ process.on('uncaughtException', (err) => {
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const rawPort = process.env.PORT;
+  const isSocket = Boolean(rawPort && isNaN(Number(rawPort)));
+  const PORT = isSocket ? rawPort : Number(rawPort) || 3000;
   const HOST = '0.0.0.0';
 
   // 1. CORS and Security Headers Middleware (Mounted FIRST before body parsers and routes)
@@ -224,7 +226,8 @@ async function startServer() {
   const isProduction =
     process.env.NODE_ENV === 'production' ||
     Boolean(typeof __filename !== 'undefined' && (__filename.endsWith('.cjs') || __filename.includes('dist'))) ||
-    Boolean(process.argv[1] && (process.argv[1].endsWith('.cjs') || process.argv[1].includes('dist'))) ||
+    Boolean(process.argv[1] && (process.argv[1].endsWith('.cjs') || process.argv[1].includes('dist') || process.argv[1].endsWith('server.js') || process.argv[1].endsWith('app.js'))) ||
+    Boolean(isSocket) ||
     fs.existsSync(path.join(process.cwd(), 'dist', 'index.html')) ||
     (typeof __dirname !== 'undefined' && fs.existsSync(path.join(__dirname, 'index.html')));
 
@@ -242,8 +245,9 @@ async function startServer() {
   } else {
     const possibleDistPaths = [
       path.join(process.cwd(), 'dist'),
-      typeof __dirname !== 'undefined' ? __dirname : '',
       typeof __dirname !== 'undefined' ? path.join(__dirname, 'dist') : '',
+      process.cwd(),
+      typeof __dirname !== 'undefined' ? __dirname : '',
     ].filter(Boolean);
 
     const distPath = possibleDistPaths.find((p) => fs.existsSync(path.join(p, 'index.html'))) || possibleDistPaths[0];
@@ -259,9 +263,16 @@ async function startServer() {
     });
   }
 
-  const server = app.listen(PORT, HOST, () => {
-    console.log(`[Hajji Original Tours Admin] Running on http://${HOST}:${PORT}`);
-  });
+  let server: any;
+  if (isSocket && typeof PORT === 'string') {
+    server = app.listen(PORT, () => {
+      console.log(`[Hajji Original Tours Admin] Successfully bound to Passenger socket: ${PORT}`);
+    });
+  } else {
+    server = app.listen(Number(PORT) || 3000, HOST, () => {
+      console.log(`[Hajji Original Tours Admin] Running on http://${HOST}:${PORT}`);
+    });
+  }
 
   server.on('error', (err: any) => {
     console.error('[HTTP Server Listen Error]:', err?.message || err);

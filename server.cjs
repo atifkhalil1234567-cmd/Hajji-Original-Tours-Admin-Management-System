@@ -227,78 +227,161 @@ var init_staffAccounts = __esm({
 
 // server/db.ts
 function isProductionEnv() {
-  return process.env.NODE_ENV === "production";
+  return process.env.NODE_ENV === "production" || Boolean(typeof __filename !== "undefined" && (__filename.endsWith(".cjs") || __filename.includes("dist"))) || Boolean(process.argv[1] && (process.argv[1].endsWith(".cjs") || process.argv[1].includes("dist") || process.argv[1].endsWith("server.js") || process.argv[1].endsWith("app.js"))) || Boolean(process.env.PORT && isNaN(Number(process.env.PORT)));
 }
 function isMySQLConfigured() {
   return Boolean(
-    process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || process.env.DB_USER && process.env.DB_USER !== "root" || process.env.DB_NAME && process.env.DB_NAME !== "hajji_original_tours" || process.env.DB_HOST && process.env.DB_HOST !== "localhost" && process.env.DB_HOST !== "127.0.0.1" || isProductionEnv()
+    process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || process.env.DATABASE_PASSWORD || process.env.DB_USER && process.env.DB_USER !== "root" || process.env.MYSQL_USER && process.env.MYSQL_USER !== "root" || process.env.DB_NAME && process.env.DB_NAME !== "hajji_original_tours" || process.env.MYSQL_DATABASE && process.env.MYSQL_DATABASE !== "hajji_original_tours" || process.env.DB_HOST && process.env.DB_HOST !== "localhost" && process.env.DB_HOST !== "127.0.0.1" || isProductionEnv()
   );
 }
-async function initDatabase() {
-  const host = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
-  const user = process.env.DB_USER || process.env.MYSQL_USER || "u648874590_hajitours";
-  const password = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || "";
-  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || "u648874590_hajitours";
-  const port = parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || "3306", 10);
-  const hasMySQLConfig = isMySQLConfigured();
-  if (hasMySQLConfig) {
-    try {
-      console.log(`[DB] Attempting MySQL connection to ${user}@${host}:${port}/${database}...`);
-      const pool = import_promise.default.createPool({
-        host,
-        user,
-        password,
-        database,
-        port,
-        waitForConnections: true,
-        connectionLimit: 10,
-        queueLimit: 0,
-        connectTimeout: 5e3
-      });
-      const [rows] = await pool.query("SELECT 1 as test");
-      if (Array.isArray(rows)) {
-        mysqlPool = pool;
-        isUsingMySQL = true;
-        lastMySQLConnectionError = null;
-        let tablesCount = 99;
-        try {
-          const [tables] = await pool.query("SHOW TABLES");
-          tablesCount = Array.isArray(tables) ? tables.length : 99;
-        } catch {
-          tablesCount = 99;
-        }
-        console.log(`[DB] Successfully connected to Hostinger MySQL at ${host}:${port}/${database} (${tablesCount} tables).`);
-        Promise.resolve().then(() => (init_staffAccounts(), staffAccounts_exports)).then(({ ensureStaffAccounts: ensureStaffAccounts2 }) => {
-          ensureStaffAccounts2().catch((e) => console.warn("[DB] MySQL ensureStaffAccounts note:", e.message));
-        }).catch(() => {
-        });
-        return {
-          connected: true,
-          engine: "mysql",
-          database,
-          host: `${host}:${port}`,
-          tablesCount,
-          message: `Connected to Production MySQL at ${host}:${port}/${database}`,
-          lastError: null,
-          isConfiguredForMySQL: true
-        };
-      }
-    } catch (err) {
+function getMySQLConfig() {
+  const host = process.env.DB_HOST || process.env.MYSQL_HOST || process.env.DATABASE_HOST || process.env.HOSTINGER_DB_HOST || "localhost";
+  const user = process.env.DB_USER || process.env.MYSQL_USER || process.env.DATABASE_USER || process.env.DB_USERNAME || process.env.MYSQL_USERNAME || "u648874590_hajitours";
+  const password = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || process.env.DATABASE_PASSWORD || process.env.DB_PASS || process.env.MYSQL_PASS || "";
+  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.DATABASE_NAME || process.env.DB_DATABASE || "u648874590_hajitours";
+  const port = parseInt(
+    process.env.DB_PORT || process.env.MYSQL_PORT || process.env.DATABASE_PORT || "3306",
+    10
+  );
+  const socketPath = process.env.DB_SOCKET_PATH || process.env.MYSQL_SOCKET || void 0;
+  let ssl = void 0;
+  if (process.env.DB_SSL === "true" || process.env.MYSQL_SSL === "true") {
+    ssl = {
+      rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED === "true"
+    };
+  }
+  return { host, user, password, database, port, socketPath, ssl };
+}
+function isConnectionLostError(err) {
+  if (!err) return false;
+  const code = err.code || "";
+  const msg = (err.message || "").toLowerCase();
+  return code === "PROTOCOL_CONNECTION_LOST" || code === "ECONNRESET" || code === "ECONNREFUSED" || code === "ETIMEDOUT" || code === "EPIPE" || code === "ER_SERVER_SHUTDOWN" || msg.includes("connection lost") || msg.includes("closed") || msg.includes("handshake");
+}
+function createPoolForHost(config, targetHost) {
+  const poolConfig = {
+    user: config.user,
+    password: config.password,
+    database: config.database,
+    waitForConnections: true,
+    connectionLimit: 10,
+    maxIdle: 10,
+    idleTimeout: 6e4,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 1e4,
+    connectTimeout: 15e3
+  };
+  if (config.socketPath) {
+    poolConfig.socketPath = config.socketPath;
+  } else {
+    poolConfig.host = targetHost;
+    poolConfig.port = config.port;
+  }
+  if (config.ssl) {
+    poolConfig.ssl = config.ssl;
+  }
+  const pool = import_promise.default.createPool(poolConfig);
+  pool.on?.("error", (err) => {
+    console.warn("[DB Pool Event Error]:", err?.message || err);
+    if (isConnectionLostError(err)) {
       isUsingMySQL = false;
       mysqlPool = null;
-      lastMySQLConnectionError = err.message || "MySQL connection error";
-      console.error(`[DB Error] Remote MySQL (${host}:${port}/${database}) returned: ${lastMySQLConnectionError}`);
+    }
+  });
+  return pool;
+}
+async function ensureDatabaseConnected() {
+  if (isUsingMySQL && mysqlPool) {
+    return getDbStatus();
+  }
+  if (!initPromise) {
+    initPromise = initDatabase().finally(() => {
+      initPromise = null;
+    });
+  }
+  return initPromise;
+}
+async function initDatabase() {
+  const config = getMySQLConfig();
+  const hasMySQLConfig = isMySQLConfigured();
+  if (hasMySQLConfig) {
+    const hostsToTry = [];
+    if (config.socketPath) {
+      hostsToTry.push(config.socketPath);
+    } else {
+      hostsToTry.push(config.host);
+      if (config.host === "localhost" && !hostsToTry.includes("127.0.0.1")) {
+        hostsToTry.push("127.0.0.1");
+      } else if (config.host === "127.0.0.1" && !hostsToTry.includes("localhost")) {
+        hostsToTry.push("localhost");
+      } else {
+        if (!hostsToTry.includes("localhost")) {
+          hostsToTry.push("localhost");
+        }
+        if (!hostsToTry.includes("127.0.0.1")) {
+          hostsToTry.push("127.0.0.1");
+        }
+      }
+    }
+    let lastError = null;
+    for (const targetHost of hostsToTry) {
+      try {
+        console.log(`[DB] Attempting MySQL connection to ${config.user}@${targetHost}:${config.port}/${config.database}...`);
+        const pool = createPoolForHost(config, targetHost);
+        const [rows] = await pool.query("SELECT 1 as test");
+        if (Array.isArray(rows)) {
+          mysqlPool = pool;
+          isUsingMySQL = true;
+          lastMySQLConnectionError = null;
+          let tablesCount = 100;
+          try {
+            const [tables] = await pool.query("SHOW TABLES");
+            tablesCount = Array.isArray(tables) ? tables.length : 100;
+          } catch {
+            tablesCount = 100;
+          }
+          console.log(`[DB] Successfully connected to Hostinger MySQL at ${targetHost}:${config.port}/${config.database} (${tablesCount} tables).`);
+          Promise.resolve().then(() => (init_staffAccounts(), staffAccounts_exports)).then(({ ensureStaffAccounts: ensureStaffAccounts2 }) => {
+            ensureStaffAccounts2().catch((e) => console.warn("[DB] MySQL ensureStaffAccounts note:", e.message));
+          }).catch(() => {
+          });
+          return {
+            connected: true,
+            engine: "mysql",
+            database: config.database,
+            host: `${targetHost}:${config.port}`,
+            tablesCount,
+            message: `Connected to Production MySQL at ${targetHost}:${config.port}/${config.database}`,
+            lastError: null,
+            isConfiguredForMySQL: true
+          };
+        }
+      } catch (err) {
+        lastError = err;
+        if (isProductionEnv()) {
+          console.warn(`[DB] Production MySQL connection to ${targetHost}:${config.port} failed: ${err.message}`);
+        } else {
+          console.log(`[DB] Dev note: Host ${targetHost}:${config.port} not directly reachable (${err.message}). Using local relational database.`);
+        }
+      }
+    }
+    isUsingMySQL = false;
+    mysqlPool = null;
+    lastMySQLConnectionError = lastError?.message || "MySQL connection error";
+    if (isProductionEnv()) {
+      console.warn(`[DB] All production MySQL connection attempts failed: ${lastMySQLConnectionError}`);
       return {
         connected: false,
         engine: "mysql",
-        database,
-        host: `${host}:${port}`,
+        database: config.database,
+        host: `${config.host}:${config.port}`,
         tablesCount: 0,
         message: `Production MySQL connection failed: ${lastMySQLConnectionError}`,
         lastError: lastMySQLConnectionError,
         isConfiguredForMySQL: true
       };
     }
+    console.log("[DB] Non-production environment: activating SQLite relational engine fallback.");
   }
   try {
     const SQL = await (0, import_sql.default)();
@@ -357,6 +440,72 @@ async function initDatabase() {
           sqliteDb.run("INSERT OR IGNORE INTO hotel_facilities (name, icon) VALUES (?, ?);", [name, icon]);
         }
       }
+      try {
+        const dubaiCheck = sqliteDb.exec("SELECT COUNT(*) as c FROM hotels WHERE city = 'Dubai';");
+        const dubaiCount = dubaiCheck[0]?.values[0]?.[0] || 0;
+        if (dubaiCount === 0) {
+          sqliteDb.run(
+            `INSERT INTO hotels (name, city, star_rating, distance_meters, shuttle_available, address, status, description)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              "Atlantis, The Palm Dubai",
+              "Dubai",
+              5,
+              500,
+              1,
+              "Crescent Rd - The Palm Jumeirah - Dubai - United Arab Emirates",
+              "active",
+              "Iconic luxury 5-star resort on the Palm Jumeirah with private beaches and world-class amenities."
+            ]
+          );
+          sqliteDb.run(
+            `INSERT INTO hotels (name, city, star_rating, distance_meters, shuttle_available, address, status, description)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              "JW Marriott Marquis Hotel Dubai",
+              "Dubai",
+              5,
+              200,
+              1,
+              "Sheikh Zayed Rd - Business Bay - Dubai - United Arab Emirates",
+              "active",
+              "Spectacular 5-star luxury twin-tower hotel in central Business Bay near Dubai Mall and Burj Khalifa."
+            ]
+          );
+        }
+      } catch (dubaiErr) {
+        console.warn("[DB] Dubai hotels seeding notice:", dubaiErr);
+      }
+      try {
+        const holidayCatCheck = sqliteDb.exec("SELECT COUNT(*) as c FROM package_categories WHERE type = 'holiday' OR slug = 'holiday-other-tours';");
+        const holidayCatCount = holidayCatCheck[0]?.values[0]?.[0] || 0;
+        if (holidayCatCount === 0) {
+          sqliteDb.run(
+            `INSERT INTO package_categories (name, slug, type, description, status)
+             VALUES (?, ?, ?, ?, ?)`,
+            ["Holiday & Other Tours", "holiday-other-tours", "holiday", "Exclusive holiday getaways, city tours, and international vacation packages.", "active"]
+          );
+        }
+      } catch (catErr) {
+        console.warn("[DB] Holiday category notice:", catErr);
+      }
+      try {
+        sqliteDb.run("UPDATE packages SET short_summary = 'Exclusive 5-Star front-row Haram accommodation in Makkah & Madinah with VIP Mina air-conditioned tents and private GMC transport.', detailed_description = 'Experience an unforgettable spiritual Hajj pilgrimage with dedicated guidance, luxury hospitality, and comprehensive round-trip flight arrangements.' WHERE id = 1 AND (short_summary IS NULL OR short_summary = '');");
+        sqliteDb.run("UPDATE packages SET short_summary = 'Complete 10-day spring spiritual Umrah journey featuring luxury hotels steps from the holy mosques in Makkah and Madinah.', detailed_description = 'All-inclusive Umrah package featuring express visa processing, guided religious tours of historic sites, and 24/7 dedicated ground assistance.' WHERE id = 2 AND (short_summary IS NULL OR short_summary = '');");
+        sqliteDb.run("UPDATE packages SET short_summary = 'Spend the most blessed last ten nights of Ramadan in the holy sanctuaries of Makkah and Madinah with full Taraweeh access.', detailed_description = 'Witness the spiritual pinnacle of the year with guaranteed front-row Haram views, daily suhoor and iftar arrangements, and experienced group leaders.' WHERE id = 3 AND (short_summary IS NULL OR short_summary = '');");
+        const pkhCheck = sqliteDb.exec("SELECT COUNT(*) as c FROM package_hotels;");
+        const pkhCount = pkhCheck[0]?.values[0]?.[0] || 0;
+        if (pkhCount === 0) {
+          sqliteDb.run("INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (1, 1, 10, 'Full Board');");
+          sqliteDb.run("INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (1, 2, 8, 'Full Board');");
+          sqliteDb.run("INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (2, 3, 5, 'Half Board');");
+          sqliteDb.run("INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (2, 4, 5, 'Half Board');");
+          sqliteDb.run("INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (3, 1, 8, 'Half Board');");
+          sqliteDb.run("INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (3, 4, 6, 'Half Board');");
+        }
+      } catch (pkgHotelsErr) {
+        console.warn("[DB] Seed package hotels notice:", pkgHotelsErr);
+      }
       const customerCols = [
         "ALTER TABLE customers ADD COLUMN assigned_role TEXT DEFAULT NULL;",
         "ALTER TABLE customers ADD COLUMN approved_at TEXT DEFAULT NULL;",
@@ -398,8 +547,8 @@ async function initDatabase() {
     return {
       connected: false,
       engine: "sqlite_fallback",
-      database: database || "hajji_original_tours",
-      host: host || "localhost",
+      database: config.database || "hajji_original_tours",
+      host: config.host || "localhost",
       tablesCount: 0,
       message: `Database initialization deferred: ${err?.message || "Waiting for connection"}`,
       lastError: err?.message || null,
@@ -443,12 +592,29 @@ async function bootstrapSqliteFromSchema() {
   }
 }
 async function dbQuery(sql, params = []) {
+  if (!isUsingMySQL || !mysqlPool) {
+    await ensureDatabaseConnected();
+  }
   if (isUsingMySQL && mysqlPool) {
-    const [rows] = await mysqlPool.query(sql, params);
-    return rows;
+    try {
+      const [rows] = await mysqlPool.query(sql, params);
+      return rows;
+    } catch (err) {
+      if (isConnectionLostError(err)) {
+        console.warn("[DB Query] MySQL connection dropped. Attempting auto-reconnect...", err.message);
+        mysqlPool = null;
+        isUsingMySQL = false;
+        await ensureDatabaseConnected();
+        if (isUsingMySQL && mysqlPool) {
+          const [retryRows] = await mysqlPool.query(sql, params);
+          return retryRows;
+        }
+      }
+      throw err;
+    }
   }
   const hasMySQLConfig = isMySQLConfigured();
-  if (hasMySQLConfig) {
+  if (isProductionEnv() && hasMySQLConfig) {
     throw new Error(`Production MySQL is unavailable: ${lastMySQLConnectionError || "Connection not established"}`);
   }
   if (!sqliteDb) {
@@ -478,12 +644,29 @@ async function dbQuery(sql, params = []) {
   }
 }
 async function dbRun(sql, params = []) {
+  if (!isUsingMySQL || !mysqlPool) {
+    await ensureDatabaseConnected();
+  }
   if (isUsingMySQL && mysqlPool) {
-    const [result] = await mysqlPool.query(sql, params);
-    return { insertId: result.insertId || 0, changes: result.affectedRows || 0 };
+    try {
+      const [result] = await mysqlPool.query(sql, params);
+      return { insertId: result?.insertId || 0, changes: result?.affectedRows || 0 };
+    } catch (err) {
+      if (isConnectionLostError(err)) {
+        console.warn("[DB Run] MySQL connection dropped. Attempting auto-reconnect...", err.message);
+        mysqlPool = null;
+        isUsingMySQL = false;
+        await ensureDatabaseConnected();
+        if (isUsingMySQL && mysqlPool) {
+          const [retryResult] = await mysqlPool.query(sql, params);
+          return { insertId: retryResult?.insertId || 0, changes: retryResult?.affectedRows || 0 };
+        }
+      }
+      throw err;
+    }
   }
   const hasMySQLConfig = isMySQLConfigured();
-  if (hasMySQLConfig) {
+  if (isProductionEnv() && hasMySQLConfig) {
     throw new Error(`Production MySQL is unavailable: ${lastMySQLConnectionError || "Connection not established"}`);
   }
   if (!sqliteDb) {
@@ -505,40 +688,43 @@ async function dbRun(sql, params = []) {
   }
 }
 async function getDbStatus() {
-  const host = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
-  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || "u648874590_hajitours";
-  const port = process.env.DB_PORT || process.env.MYSQL_PORT || "3306";
+  const config = getMySQLConfig();
   const hasMySQLConfig = isMySQLConfigured();
   if (hasMySQLConfig) {
+    if (!isUsingMySQL || !mysqlPool) {
+      await ensureDatabaseConnected();
+    }
     if (isUsingMySQL && mysqlPool) {
-      let tablesCount2 = 99;
+      let tablesCount2 = 100;
       try {
         const [tables] = await mysqlPool.query("SHOW TABLES");
-        tablesCount2 = Array.isArray(tables) ? tables.length : 99;
+        tablesCount2 = Array.isArray(tables) ? tables.length : 100;
       } catch {
-        tablesCount2 = 99;
+        tablesCount2 = 100;
       }
       return {
         connected: true,
         engine: "mysql",
-        database,
-        host: `${host}:${port}`,
+        database: config.database,
+        host: `${config.host}:${config.port}`,
         tablesCount: tablesCount2,
-        message: `Connected to Production MySQL at ${host}:${port}/${database}`,
+        message: `Connected to Production MySQL at ${config.host}:${config.port}/${config.database}`,
         lastError: null,
         isConfiguredForMySQL: true
       };
     }
-    return {
-      connected: false,
-      engine: "mysql",
-      database,
-      host: `${host}:${port}`,
-      tablesCount: 0,
-      message: `Production MySQL connection failed: ${lastMySQLConnectionError || "Connection not established"}`,
-      lastError: lastMySQLConnectionError || "Connection not established",
-      isConfiguredForMySQL: true
-    };
+    if (isProductionEnv()) {
+      return {
+        connected: false,
+        engine: "mysql",
+        database: config.database,
+        host: `${config.host}:${config.port}`,
+        tablesCount: 0,
+        message: `Production MySQL connection failed: ${lastMySQLConnectionError || "Connection not established"}`,
+        lastError: lastMySQLConnectionError || "Connection not established",
+        isConfiguredForMySQL: true
+      };
+    }
   }
   let tablesCount = 38;
   if (sqliteDb) {
@@ -561,11 +747,7 @@ async function getDbStatus() {
   };
 }
 async function testMySQLQuery() {
-  const host = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
-  const user = process.env.DB_USER || process.env.MYSQL_USER || "u648874590_hajitours";
-  const password = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || "";
-  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || "u648874590_hajitours";
-  const port = parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || "3306", 10);
+  const config = getMySQLConfig();
   if (isUsingMySQL && mysqlPool) {
     try {
       const [rows] = await mysqlPool.query("SELECT 1 AS connected");
@@ -578,14 +760,22 @@ async function testMySQLQuery() {
   }
   let conn = null;
   try {
-    conn = await import_promise.default.createConnection({
-      host,
-      user,
-      password,
-      database,
-      port,
-      connectTimeout: 5e3
-    });
+    const connConfig = {
+      user: config.user,
+      password: config.password,
+      database: config.database,
+      connectTimeout: 1e4
+    };
+    if (config.socketPath) {
+      connConfig.socketPath = config.socketPath;
+    } else {
+      connConfig.host = config.host;
+      connConfig.port = config.port;
+    }
+    if (config.ssl) {
+      connConfig.ssl = config.ssl;
+    }
+    conn = await import_promise.default.createConnection(connConfig);
     const [rows] = await conn.query("SELECT 1 AS connected");
     await conn.end();
     if (Array.isArray(rows) && rows.length > 0) {
@@ -603,9 +793,10 @@ async function testMySQLQuery() {
     return false;
   }
 }
-var import_promise, import_fs, import_path, import_sql, mysqlPool, sqliteDb, isUsingMySQL, lastMySQLConnectionError, sqliteFilePath;
+var import_config, import_promise, import_fs, import_path, import_sql, mysqlPool, sqliteDb, isUsingMySQL, lastMySQLConnectionError, initPromise, sqliteFilePath;
 var init_db = __esm({
   "server/db.ts"() {
+    import_config = require("dotenv/config");
     import_promise = __toESM(require("mysql2/promise"));
     import_fs = __toESM(require("fs"));
     import_path = __toESM(require("path"));
@@ -614,12 +805,13 @@ var init_db = __esm({
     sqliteDb = null;
     isUsingMySQL = false;
     lastMySQLConnectionError = null;
+    initPromise = null;
     sqliteFilePath = import_path.default.join(process.cwd(), "data_store.sqlite");
   }
 });
 
 // server.ts
-var import_config = require("dotenv/config");
+var import_config2 = require("dotenv/config");
 var import_express12 = __toESM(require("express"));
 var import_path4 = __toESM(require("path"));
 var import_fs4 = __toESM(require("fs"));
@@ -1337,21 +1529,48 @@ router3.get("/", authenticate, async (req, res) => {
        LIMIT ${limitNum} OFFSET ${offset}`,
       params
     );
+    const pkgIds = rawPackages.map((p) => p.id);
+    const hotelsByPkgId = {};
+    if (pkgIds.length > 0) {
+      try {
+        const placeholders = pkgIds.map(() => "?").join(",");
+        const hotelRows = await dbQuery(
+          `SELECT ph.*, h.name as hotel_name, h.city as hotel_city, h.star_rating, h.distance_meters, h.shuttle_available, h.address
+           FROM package_hotels ph
+           JOIN hotels h ON ph.hotel_id = h.id
+           WHERE ph.package_id IN (${placeholders})`,
+          pkgIds
+        );
+        for (const row of hotelRows) {
+          if (!hotelsByPkgId[row.package_id]) {
+            hotelsByPkgId[row.package_id] = [];
+          }
+          hotelsByPkgId[row.package_id].push(row);
+        }
+      } catch (hErr) {
+        console.warn("[Packages] Error querying package hotels:", hErr.message);
+      }
+    }
     const packages = rawPackages.map((pkg) => {
       const isPublished = pkg.status === 1 || pkg.status === "1" || pkg.status === "published" || pkg.status === "active" || pkg.status === true;
+      const desc = pkg.detailed_description || pkg.short_summary || pkg.short_description || pkg.description || "";
       return {
         ...pkg,
         status: isPublished ? "published" : "draft",
         raw_status: pkg.status,
         is_active: isPublished,
         category_type: pkg.package_type || "umrah",
-        short_description: pkg.short_summary || pkg.detailed_description || pkg.short_description || "",
+        description: desc,
+        short_description: desc,
+        short_summary: pkg.short_summary || desc,
+        detailed_description: desc,
         starting_price: Number(pkg.starting_price) || 0,
         total_seats: Number(pkg.total_seats) || 50,
         booked_seats: Number(pkg.booked_seats) || 0,
         duration_days: Number(pkg.duration_days) || 14,
         gregorian_year: Number(pkg.gregorian_year) || 2026,
-        category_name: pkg.category_name || "General Package"
+        category_name: pkg.category_name || "General Package",
+        hotels: hotelsByPkgId[pkg.id] || []
       };
     });
     res.json({
@@ -1428,13 +1647,14 @@ router3.get("/:id", authenticate, async (req, res) => {
     const exclusions = await dbQuery(`SELECT * FROM package_exclusions WHERE package_id = ? ORDER BY display_order ASC`, [actualId]);
     const services = await dbQuery(`SELECT * FROM package_services WHERE package_id = ?`, [actualId]);
     const hotels = await dbQuery(
-      `SELECT ph.*, h.name as hotel_name, h.city as hotel_city, h.star_rating
+      `SELECT ph.*, h.name as hotel_name, h.city as hotel_city, h.star_rating, h.distance_meters, h.shuttle_available, h.address
        FROM package_hotels ph
        JOIN hotels h ON ph.hotel_id = h.id
        WHERE ph.package_id = ?`,
       [actualId]
     );
     const isPublished = pkg.status === 1 || pkg.status === "1" || pkg.status === "published" || pkg.status === "active" || pkg.status === true;
+    const desc = pkg.detailed_description || pkg.short_summary || pkg.short_description || pkg.description || "";
     res.json({
       success: true,
       data: {
@@ -1442,7 +1662,10 @@ router3.get("/:id", authenticate, async (req, res) => {
         status: isPublished ? "published" : "draft",
         raw_status: pkg.status,
         is_active: isPublished,
-        short_description: pkg.short_summary || pkg.detailed_description || pkg.short_description || "",
+        description: desc,
+        short_description: desc,
+        short_summary: pkg.short_summary || desc,
+        detailed_description: desc,
         starting_price: Number(pkg.starting_price) || 0,
         total_seats: Number(pkg.total_seats) || 50,
         booked_seats: Number(pkg.booked_seats) || 0,
@@ -1483,10 +1706,19 @@ router3.post("/", authenticate, authorize("packages", "manage"), async (req, res
       qurbani_included,
       short_summary,
       detailed_description,
-      status
+      description,
+      short_description,
+      status,
+      hotel_ids,
+      hotels
     } = req.body;
     const { currency_id: resolvedCurrencyId, currency: resolvedCurrency } = resolveCurrency(currency_id, currency);
     const generatedSlug = slug || title.toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now().toString().slice(-4);
+    const finalDescription = detailed_description || description || short_description || short_summary || "";
+    const finalSummary = short_summary || short_description || finalDescription;
+    const finalPkgType = package_type || "umrah";
+    const isHajj = finalPkgType === "hajj" || finalPkgType === "vip_hajj";
+    const finalHajjType = isHajj ? hajj_type || "non_shifting" : "not_applicable";
     const result = await dbRun(
       `INSERT INTO packages (
         category_id, title, slug, package_type, hajj_type, gregorian_year, duration_days,
@@ -1494,11 +1726,11 @@ router3.post("/", authenticate, authorize("packages", "manage"), async (req, res
         ziyarat_included, qurbani_included, short_summary, detailed_description, status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        category_id,
+        category_id || (finalPkgType === "holiday" ? 4 : finalPkgType === "hajj" || finalPkgType === "vip_hajj" ? 1 : 2),
         title,
         generatedSlug,
-        package_type || "umrah",
-        hajj_type || "not_applicable",
+        finalPkgType,
+        finalHajjType,
         gregorian_year || 2026,
         duration_days || 14,
         origin_city || "London",
@@ -1510,11 +1742,22 @@ router3.post("/", authenticate, authorize("packages", "manage"), async (req, res
         visa_included ? 1 : 0,
         ziyarat_included ? 1 : 0,
         qurbani_included ? 1 : 0,
-        short_summary || "",
-        detailed_description || "",
+        finalSummary,
+        finalDescription,
         status || "published"
       ]
     );
+    const newPkgId = result.insertId;
+    const hotelsToLink = Array.isArray(hotel_ids) ? hotel_ids.map((id) => ({ hotel_id: id })) : Array.isArray(hotels) ? hotels : [];
+    for (const h of hotelsToLink) {
+      const hId = typeof h === "object" ? Number(h.hotel_id || h.id) : Number(h);
+      if (hId && !isNaN(hId)) {
+        await dbRun(
+          `INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (?, ?, ?, ?)`,
+          [newPkgId, hId, Number(h.nights_count) || Math.floor(Number(duration_days || 14) / 2) || 7, h.meal_plan || "Half Board"]
+        );
+      }
+    }
     await logActivity(req.user.id, "packages", "create", result.insertId, `Created package "${title}"`, req);
     res.json({ success: true, id: result.insertId, message: "Package created successfully" });
   } catch (e) {
@@ -1542,9 +1785,18 @@ router3.put("/:id", authenticate, authorize("packages", "manage"), async (req, r
       qurbani_included,
       short_summary,
       detailed_description,
-      status
+      description,
+      short_description,
+      status,
+      hotel_ids,
+      hotels
     } = req.body;
     const { currency_id: resolvedCurrencyId, currency: resolvedCurrency } = resolveCurrency(currency_id, currency);
+    const finalDescription = detailed_description || description || short_description || short_summary || "";
+    const finalSummary = short_summary || short_description || finalDescription;
+    const finalPkgType = package_type || "umrah";
+    const isHajj = finalPkgType === "hajj" || finalPkgType === "vip_hajj";
+    const finalHajjType = isHajj ? hajj_type || "non_shifting" : "not_applicable";
     await dbRun(
       `UPDATE packages SET
         category_id = ?, title = ?, package_type = ?, hajj_type = ?, gregorian_year = ?,
@@ -1553,10 +1805,10 @@ router3.put("/:id", authenticate, authorize("packages", "manage"), async (req, r
         short_summary = ?, detailed_description = ?, status = ?
        WHERE id = ?`,
       [
-        category_id,
+        category_id || 1,
         title,
-        package_type,
-        hajj_type,
+        finalPkgType,
+        finalHajjType,
         gregorian_year,
         duration_days,
         origin_city,
@@ -1568,12 +1820,25 @@ router3.put("/:id", authenticate, authorize("packages", "manage"), async (req, r
         visa_included ? 1 : 0,
         ziyarat_included ? 1 : 0,
         qurbani_included ? 1 : 0,
-        short_summary,
-        detailed_description,
+        finalSummary,
+        finalDescription,
         status,
         pkgId
       ]
     );
+    if (hotel_ids !== void 0 || hotels !== void 0) {
+      await dbRun(`DELETE FROM package_hotels WHERE package_id = ?`, [pkgId]);
+      const hotelsToLink = Array.isArray(hotel_ids) ? hotel_ids.map((id) => ({ hotel_id: id })) : Array.isArray(hotels) ? hotels : [];
+      for (const h of hotelsToLink) {
+        const hId = typeof h === "object" ? Number(h.hotel_id || h.id) : Number(h);
+        if (hId && !isNaN(hId)) {
+          await dbRun(
+            `INSERT INTO package_hotels (package_id, hotel_id, nights_count, meal_plan) VALUES (?, ?, ?, ?)`,
+            [pkgId, hId, Number(h.nights_count) || Math.floor(Number(duration_days || 14) / 2) || 7, h.meal_plan || "Half Board"]
+          );
+        }
+      }
+    }
     await logActivity(req.user.id, "packages", "update", pkgId, `Updated package "${title}"`, req);
     res.json({ success: true, message: "Package updated successfully" });
   } catch (e) {
@@ -3735,7 +4000,9 @@ process.on("uncaughtException", (err) => {
 });
 async function startServer() {
   const app = (0, import_express12.default)();
-  const PORT = Number(process.env.PORT) || 3e3;
+  const rawPort = process.env.PORT;
+  const isSocket = Boolean(rawPort && isNaN(Number(rawPort)));
+  const PORT = isSocket ? rawPort : Number(rawPort) || 3e3;
   const HOST = "0.0.0.0";
   const configuredCorsOrigins = (process.env.CORS_ORIGIN || "").split(",").map((o) => o.trim()).filter(Boolean);
   const KNOWN_ALLOWED_ORIGINS = /* @__PURE__ */ new Set([
@@ -3744,7 +4011,8 @@ async function startServer() {
     "https://www.hajjioriginaltours.com",
     "http://www.hajjioriginaltours.com",
     "https://admin.hajjioriginaltours.com",
-    "https://api.hajjioriginaltours.com"
+    "https://api.hajjioriginaltours.com",
+    "https://myc.hajjioriginaltours.com"
   ]);
   app.use((req, res, next) => {
     const origin = req.headers.origin;
@@ -3835,8 +4103,9 @@ async function startServer() {
   });
   app.get("/api/health", async (req, res) => {
     const dbStatus = await getDbStatus();
-    res.json({
-      status: "ok",
+    const isConnected = Boolean(dbStatus.connected);
+    res.status(isConnected ? 200 : 503).json({
+      status: isConnected ? "ok" : "degraded",
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       database: dbStatus,
       app: "Hajji Original Tours Admin Management System",
@@ -3888,7 +4157,7 @@ async function startServer() {
       message: err.message || "An unexpected internal server error occurred"
     });
   });
-  const isProduction = process.env.NODE_ENV === "production" || Boolean(typeof __filename !== "undefined" && (__filename.endsWith(".cjs") || __filename.includes("dist"))) || Boolean(process.argv[1] && (process.argv[1].endsWith(".cjs") || process.argv[1].includes("dist"))) || import_fs4.default.existsSync(import_path4.default.join(process.cwd(), "dist", "index.html")) || typeof __dirname !== "undefined" && import_fs4.default.existsSync(import_path4.default.join(__dirname, "index.html"));
+  const isProduction = process.env.NODE_ENV === "production" || Boolean(typeof __filename !== "undefined" && (__filename.endsWith(".cjs") || __filename.includes("dist"))) || Boolean(process.argv[1] && (process.argv[1].endsWith(".cjs") || process.argv[1].includes("dist") || process.argv[1].endsWith("server.js") || process.argv[1].endsWith("app.js"))) || Boolean(isSocket) || import_fs4.default.existsSync(import_path4.default.join(process.cwd(), "dist", "index.html")) || typeof __dirname !== "undefined" && import_fs4.default.existsSync(import_path4.default.join(__dirname, "index.html"));
   if (!isProduction) {
     try {
       const { createServer: createViteServer } = await import("vite");
@@ -3903,8 +4172,9 @@ async function startServer() {
   } else {
     const possibleDistPaths = [
       import_path4.default.join(process.cwd(), "dist"),
-      typeof __dirname !== "undefined" ? __dirname : "",
-      typeof __dirname !== "undefined" ? import_path4.default.join(__dirname, "dist") : ""
+      typeof __dirname !== "undefined" ? import_path4.default.join(__dirname, "dist") : "",
+      process.cwd(),
+      typeof __dirname !== "undefined" ? __dirname : ""
     ].filter(Boolean);
     const distPath = possibleDistPaths.find((p) => import_fs4.default.existsSync(import_path4.default.join(p, "index.html"))) || possibleDistPaths[0];
     app.use(import_express12.default.static(distPath));
@@ -3917,9 +4187,16 @@ async function startServer() {
       }
     });
   }
-  const server = app.listen(PORT, HOST, () => {
-    console.log(`[Hajji Original Tours Admin] Running on http://${HOST}:${PORT}`);
-  });
+  let server;
+  if (isSocket && typeof PORT === "string") {
+    server = app.listen(PORT, () => {
+      console.log(`[Hajji Original Tours Admin] Successfully bound to Passenger socket: ${PORT}`);
+    });
+  } else {
+    server = app.listen(Number(PORT) || 3e3, HOST, () => {
+      console.log(`[Hajji Original Tours Admin] Running on http://${HOST}:${PORT}`);
+    });
+  }
   server.on("error", (err) => {
     console.error("[HTTP Server Listen Error]:", err?.message || err);
   });

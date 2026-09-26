@@ -227,7 +227,7 @@ var init_staffAccounts = __esm({
 
 // server/db.ts
 function isProductionEnv() {
-  return process.env.NODE_ENV === "production" || Boolean(typeof __filename !== "undefined" && (__filename.endsWith(".cjs") || __filename.includes("dist"))) || Boolean(process.argv[1] && (process.argv[1].endsWith(".cjs") || process.argv[1].includes("dist")));
+  return process.env.NODE_ENV === "production" || Boolean(typeof __filename !== "undefined" && (__filename.endsWith(".cjs") || __filename.includes("dist"))) || Boolean(process.argv[1] && (process.argv[1].endsWith(".cjs") || process.argv[1].includes("dist") || process.argv[1].endsWith("server.js") || process.argv[1].endsWith("app.js"))) || Boolean(process.env.PORT && isNaN(Number(process.env.PORT)));
 }
 function isMySQLConfigured() {
   return Boolean(
@@ -314,6 +314,13 @@ async function initDatabase() {
         hostsToTry.push("127.0.0.1");
       } else if (config.host === "127.0.0.1" && !hostsToTry.includes("localhost")) {
         hostsToTry.push("localhost");
+      } else {
+        if (!hostsToTry.includes("localhost")) {
+          hostsToTry.push("localhost");
+        }
+        if (!hostsToTry.includes("127.0.0.1")) {
+          hostsToTry.push("127.0.0.1");
+        }
       }
     }
     let lastError = null;
@@ -3993,7 +4000,9 @@ process.on("uncaughtException", (err) => {
 });
 async function startServer() {
   const app = (0, import_express12.default)();
-  const PORT = Number(process.env.PORT) || 3e3;
+  const rawPort = process.env.PORT;
+  const isSocket = Boolean(rawPort && isNaN(Number(rawPort)));
+  const PORT = isSocket ? rawPort : Number(rawPort) || 3e3;
   const HOST = "0.0.0.0";
   const configuredCorsOrigins = (process.env.CORS_ORIGIN || "").split(",").map((o) => o.trim()).filter(Boolean);
   const KNOWN_ALLOWED_ORIGINS = /* @__PURE__ */ new Set([
@@ -4148,7 +4157,7 @@ async function startServer() {
       message: err.message || "An unexpected internal server error occurred"
     });
   });
-  const isProduction = process.env.NODE_ENV === "production" || Boolean(typeof __filename !== "undefined" && (__filename.endsWith(".cjs") || __filename.includes("dist"))) || Boolean(process.argv[1] && (process.argv[1].endsWith(".cjs") || process.argv[1].includes("dist"))) || import_fs4.default.existsSync(import_path4.default.join(process.cwd(), "dist", "index.html")) || typeof __dirname !== "undefined" && import_fs4.default.existsSync(import_path4.default.join(__dirname, "index.html"));
+  const isProduction = process.env.NODE_ENV === "production" || Boolean(typeof __filename !== "undefined" && (__filename.endsWith(".cjs") || __filename.includes("dist"))) || Boolean(process.argv[1] && (process.argv[1].endsWith(".cjs") || process.argv[1].includes("dist") || process.argv[1].endsWith("server.js") || process.argv[1].endsWith("app.js"))) || Boolean(isSocket) || import_fs4.default.existsSync(import_path4.default.join(process.cwd(), "dist", "index.html")) || typeof __dirname !== "undefined" && import_fs4.default.existsSync(import_path4.default.join(__dirname, "index.html"));
   if (!isProduction) {
     try {
       const { createServer: createViteServer } = await import("vite");
@@ -4163,8 +4172,9 @@ async function startServer() {
   } else {
     const possibleDistPaths = [
       import_path4.default.join(process.cwd(), "dist"),
-      typeof __dirname !== "undefined" ? __dirname : "",
-      typeof __dirname !== "undefined" ? import_path4.default.join(__dirname, "dist") : ""
+      typeof __dirname !== "undefined" ? import_path4.default.join(__dirname, "dist") : "",
+      process.cwd(),
+      typeof __dirname !== "undefined" ? __dirname : ""
     ].filter(Boolean);
     const distPath = possibleDistPaths.find((p) => import_fs4.default.existsSync(import_path4.default.join(p, "index.html"))) || possibleDistPaths[0];
     app.use(import_express12.default.static(distPath));
@@ -4177,9 +4187,16 @@ async function startServer() {
       }
     });
   }
-  const server = app.listen(PORT, HOST, () => {
-    console.log(`[Hajji Original Tours Admin] Running on http://${HOST}:${PORT}`);
-  });
+  let server;
+  if (isSocket && typeof PORT === "string") {
+    server = app.listen(PORT, () => {
+      console.log(`[Hajji Original Tours Admin] Successfully bound to Passenger socket: ${PORT}`);
+    });
+  } else {
+    server = app.listen(Number(PORT) || 3e3, HOST, () => {
+      console.log(`[Hajji Original Tours Admin] Running on http://${HOST}:${PORT}`);
+    });
+  }
   server.on("error", (err) => {
     console.error("[HTTP Server Listen Error]:", err?.message || err);
   });
