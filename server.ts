@@ -155,11 +155,12 @@ async function startServer() {
       console.log('[DB Engine] Initial database notice:', err?.message || err);
     });
 
-  // API Routes
+  // API Routes - Safe /api/health status check
   app.get('/api/health', async (req, res) => {
     const dbStatus = await getDbStatus();
-    res.json({
-      status: 'ok',
+    const isConnected = Boolean(dbStatus.connected);
+    res.status(isConnected ? 200 : 503).json({
+      status: isConnected ? 'ok' : 'degraded',
       timestamp: new Date().toISOString(),
       database: dbStatus,
       app: 'Hajji Original Tours Admin Management System',

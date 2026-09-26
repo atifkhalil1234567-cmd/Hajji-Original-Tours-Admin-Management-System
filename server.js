@@ -227,81 +227,154 @@ var init_staffAccounts = __esm({
 
 // server/db.ts
 function isProductionEnv() {
-  return process.env.NODE_ENV === "production";
+  return process.env.NODE_ENV === "production" || Boolean(typeof __filename !== "undefined" && (__filename.endsWith(".cjs") || __filename.includes("dist"))) || Boolean(process.argv[1] && (process.argv[1].endsWith(".cjs") || process.argv[1].includes("dist")));
 }
 function isMySQLConfigured() {
   return Boolean(
-    process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || process.env.DB_USER && process.env.DB_USER !== "root" || process.env.DB_NAME && process.env.DB_NAME !== "hajji_original_tours" || process.env.DB_HOST && process.env.DB_HOST !== "localhost" && process.env.DB_HOST !== "127.0.0.1" || isProductionEnv()
+    process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || process.env.DATABASE_PASSWORD || process.env.DB_USER && process.env.DB_USER !== "root" || process.env.MYSQL_USER && process.env.MYSQL_USER !== "root" || process.env.DB_NAME && process.env.DB_NAME !== "hajji_original_tours" || process.env.MYSQL_DATABASE && process.env.MYSQL_DATABASE !== "hajji_original_tours" || process.env.DB_HOST && process.env.DB_HOST !== "localhost" && process.env.DB_HOST !== "127.0.0.1" || isProductionEnv()
   );
 }
-async function initDatabase() {
-  const host = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
-  const user = process.env.DB_USER || process.env.MYSQL_USER || "u648874590_hajitours";
-  const password = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || "";
-  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || "u648874590_hajitours";
-  const port = parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || "3306", 10);
-  const hasMySQLConfig = isMySQLConfigured();
-  if (hasMySQLConfig) {
-    try {
-      console.log(`[DB] Attempting MySQL connection to ${user}@${host}:${port}/${database}...`);
-      const pool = import_promise.default.createPool({
-        host,
-        user,
-        password,
-        database,
-        port,
-        waitForConnections: true,
-        connectionLimit: 10,
-        queueLimit: 0,
-        connectTimeout: 5e3
-      });
-      const [rows] = await pool.query("SELECT 1 as test");
-      if (Array.isArray(rows)) {
-        mysqlPool = pool;
-        isUsingMySQL = true;
-        lastMySQLConnectionError = null;
-        let tablesCount = 99;
-        try {
-          const [tables] = await pool.query("SHOW TABLES");
-          tablesCount = Array.isArray(tables) ? tables.length : 99;
-        } catch {
-          tablesCount = 99;
-        }
-        console.log(`[DB] Successfully connected to Hostinger MySQL at ${host}:${port}/${database} (${tablesCount} tables).`);
-        Promise.resolve().then(() => (init_staffAccounts(), staffAccounts_exports)).then(({ ensureStaffAccounts: ensureStaffAccounts2 }) => {
-          ensureStaffAccounts2().catch((e) => console.warn("[DB] MySQL ensureStaffAccounts note:", e.message));
-        }).catch(() => {
-        });
-        return {
-          connected: true,
-          engine: "mysql",
-          database,
-          host: `${host}:${port}`,
-          tablesCount,
-          message: `Connected to Production MySQL at ${host}:${port}/${database}`,
-          lastError: null,
-          isConfiguredForMySQL: true
-        };
-      }
-    } catch (err) {
+function getMySQLConfig() {
+  const host = process.env.DB_HOST || process.env.MYSQL_HOST || process.env.DATABASE_HOST || process.env.HOSTINGER_DB_HOST || "localhost";
+  const user = process.env.DB_USER || process.env.MYSQL_USER || process.env.DATABASE_USER || process.env.DB_USERNAME || process.env.MYSQL_USERNAME || "u648874590_hajitours";
+  const password = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || process.env.DATABASE_PASSWORD || process.env.DB_PASS || process.env.MYSQL_PASS || "";
+  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.DATABASE_NAME || process.env.DB_DATABASE || "u648874590_hajitours";
+  const port = parseInt(
+    process.env.DB_PORT || process.env.MYSQL_PORT || process.env.DATABASE_PORT || "3306",
+    10
+  );
+  const socketPath = process.env.DB_SOCKET_PATH || process.env.MYSQL_SOCKET || void 0;
+  let ssl = void 0;
+  if (process.env.DB_SSL === "true" || process.env.MYSQL_SSL === "true") {
+    ssl = {
+      rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED === "true"
+    };
+  }
+  return { host, user, password, database, port, socketPath, ssl };
+}
+function isConnectionLostError(err) {
+  if (!err) return false;
+  const code = err.code || "";
+  const msg = (err.message || "").toLowerCase();
+  return code === "PROTOCOL_CONNECTION_LOST" || code === "ECONNRESET" || code === "ECONNREFUSED" || code === "ETIMEDOUT" || code === "EPIPE" || code === "ER_SERVER_SHUTDOWN" || msg.includes("connection lost") || msg.includes("closed") || msg.includes("handshake");
+}
+function createPoolForHost(config, targetHost) {
+  const poolConfig = {
+    user: config.user,
+    password: config.password,
+    database: config.database,
+    waitForConnections: true,
+    connectionLimit: 10,
+    maxIdle: 10,
+    idleTimeout: 6e4,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 1e4,
+    connectTimeout: 15e3
+  };
+  if (config.socketPath) {
+    poolConfig.socketPath = config.socketPath;
+  } else {
+    poolConfig.host = targetHost;
+    poolConfig.port = config.port;
+  }
+  if (config.ssl) {
+    poolConfig.ssl = config.ssl;
+  }
+  const pool = import_promise.default.createPool(poolConfig);
+  pool.on?.("error", (err) => {
+    console.warn("[DB Pool Event Error]:", err?.message || err);
+    if (isConnectionLostError(err)) {
       isUsingMySQL = false;
       mysqlPool = null;
-      lastMySQLConnectionError = err.message || "MySQL connection error";
-      console.warn(`[DB Warning] Remote MySQL (${host}:${port}/${database}) unavailable: ${lastMySQLConnectionError}`);
-      if (isProductionEnv()) {
-        return {
-          connected: false,
-          engine: "mysql",
-          database,
-          host: `${host}:${port}`,
-          tablesCount: 0,
-          message: `Production MySQL connection failed: ${lastMySQLConnectionError}`,
-          lastError: lastMySQLConnectionError,
-          isConfiguredForMySQL: true
-        };
-      }
-      console.log("[DB] Non-production environment: activating SQLite relational engine fallback.");
     }
+  });
+  return pool;
+}
+async function ensureDatabaseConnected() {
+  if (isUsingMySQL && mysqlPool) {
+    return getDbStatus();
+  }
+  if (!initPromise) {
+    initPromise = initDatabase().finally(() => {
+      initPromise = null;
+    });
+  }
+  return initPromise;
+}
+async function initDatabase() {
+  const config = getMySQLConfig();
+  const hasMySQLConfig = isMySQLConfigured();
+  if (hasMySQLConfig) {
+    const hostsToTry = [];
+    if (config.socketPath) {
+      hostsToTry.push(config.socketPath);
+    } else {
+      hostsToTry.push(config.host);
+      if (config.host === "localhost" && !hostsToTry.includes("127.0.0.1")) {
+        hostsToTry.push("127.0.0.1");
+      } else if (config.host === "127.0.0.1" && !hostsToTry.includes("localhost")) {
+        hostsToTry.push("localhost");
+      }
+    }
+    let lastError = null;
+    for (const targetHost of hostsToTry) {
+      try {
+        console.log(`[DB] Attempting MySQL connection to ${config.user}@${targetHost}:${config.port}/${config.database}...`);
+        const pool = createPoolForHost(config, targetHost);
+        const [rows] = await pool.query("SELECT 1 as test");
+        if (Array.isArray(rows)) {
+          mysqlPool = pool;
+          isUsingMySQL = true;
+          lastMySQLConnectionError = null;
+          let tablesCount = 100;
+          try {
+            const [tables] = await pool.query("SHOW TABLES");
+            tablesCount = Array.isArray(tables) ? tables.length : 100;
+          } catch {
+            tablesCount = 100;
+          }
+          console.log(`[DB] Successfully connected to Hostinger MySQL at ${targetHost}:${config.port}/${config.database} (${tablesCount} tables).`);
+          Promise.resolve().then(() => (init_staffAccounts(), staffAccounts_exports)).then(({ ensureStaffAccounts: ensureStaffAccounts2 }) => {
+            ensureStaffAccounts2().catch((e) => console.warn("[DB] MySQL ensureStaffAccounts note:", e.message));
+          }).catch(() => {
+          });
+          return {
+            connected: true,
+            engine: "mysql",
+            database: config.database,
+            host: `${targetHost}:${config.port}`,
+            tablesCount,
+            message: `Connected to Production MySQL at ${targetHost}:${config.port}/${config.database}`,
+            lastError: null,
+            isConfiguredForMySQL: true
+          };
+        }
+      } catch (err) {
+        lastError = err;
+        if (isProductionEnv()) {
+          console.warn(`[DB] Production MySQL connection to ${targetHost}:${config.port} failed: ${err.message}`);
+        } else {
+          console.log(`[DB] Dev note: Host ${targetHost}:${config.port} not directly reachable (${err.message}). Using local relational database.`);
+        }
+      }
+    }
+    isUsingMySQL = false;
+    mysqlPool = null;
+    lastMySQLConnectionError = lastError?.message || "MySQL connection error";
+    if (isProductionEnv()) {
+      console.warn(`[DB] All production MySQL connection attempts failed: ${lastMySQLConnectionError}`);
+      return {
+        connected: false,
+        engine: "mysql",
+        database: config.database,
+        host: `${config.host}:${config.port}`,
+        tablesCount: 0,
+        message: `Production MySQL connection failed: ${lastMySQLConnectionError}`,
+        lastError: lastMySQLConnectionError,
+        isConfiguredForMySQL: true
+      };
+    }
+    console.log("[DB] Non-production environment: activating SQLite relational engine fallback.");
   }
   try {
     const SQL = await (0, import_sql.default)();
@@ -467,8 +540,8 @@ async function initDatabase() {
     return {
       connected: false,
       engine: "sqlite_fallback",
-      database: database || "hajji_original_tours",
-      host: host || "localhost",
+      database: config.database || "hajji_original_tours",
+      host: config.host || "localhost",
       tablesCount: 0,
       message: `Database initialization deferred: ${err?.message || "Waiting for connection"}`,
       lastError: err?.message || null,
@@ -512,12 +585,29 @@ async function bootstrapSqliteFromSchema() {
   }
 }
 async function dbQuery(sql, params = []) {
+  if (!isUsingMySQL || !mysqlPool) {
+    await ensureDatabaseConnected();
+  }
   if (isUsingMySQL && mysqlPool) {
-    const [rows] = await mysqlPool.query(sql, params);
-    return rows;
+    try {
+      const [rows] = await mysqlPool.query(sql, params);
+      return rows;
+    } catch (err) {
+      if (isConnectionLostError(err)) {
+        console.warn("[DB Query] MySQL connection dropped. Attempting auto-reconnect...", err.message);
+        mysqlPool = null;
+        isUsingMySQL = false;
+        await ensureDatabaseConnected();
+        if (isUsingMySQL && mysqlPool) {
+          const [retryRows] = await mysqlPool.query(sql, params);
+          return retryRows;
+        }
+      }
+      throw err;
+    }
   }
   const hasMySQLConfig = isMySQLConfigured();
-  if (hasMySQLConfig && isProductionEnv()) {
+  if (isProductionEnv() && hasMySQLConfig) {
     throw new Error(`Production MySQL is unavailable: ${lastMySQLConnectionError || "Connection not established"}`);
   }
   if (!sqliteDb) {
@@ -547,12 +637,29 @@ async function dbQuery(sql, params = []) {
   }
 }
 async function dbRun(sql, params = []) {
+  if (!isUsingMySQL || !mysqlPool) {
+    await ensureDatabaseConnected();
+  }
   if (isUsingMySQL && mysqlPool) {
-    const [result] = await mysqlPool.query(sql, params);
-    return { insertId: result.insertId || 0, changes: result.affectedRows || 0 };
+    try {
+      const [result] = await mysqlPool.query(sql, params);
+      return { insertId: result?.insertId || 0, changes: result?.affectedRows || 0 };
+    } catch (err) {
+      if (isConnectionLostError(err)) {
+        console.warn("[DB Run] MySQL connection dropped. Attempting auto-reconnect...", err.message);
+        mysqlPool = null;
+        isUsingMySQL = false;
+        await ensureDatabaseConnected();
+        if (isUsingMySQL && mysqlPool) {
+          const [retryResult] = await mysqlPool.query(sql, params);
+          return { insertId: retryResult?.insertId || 0, changes: retryResult?.affectedRows || 0 };
+        }
+      }
+      throw err;
+    }
   }
   const hasMySQLConfig = isMySQLConfigured();
-  if (hasMySQLConfig && isProductionEnv()) {
+  if (isProductionEnv() && hasMySQLConfig) {
     throw new Error(`Production MySQL is unavailable: ${lastMySQLConnectionError || "Connection not established"}`);
   }
   if (!sqliteDb) {
@@ -574,26 +681,27 @@ async function dbRun(sql, params = []) {
   }
 }
 async function getDbStatus() {
-  const host = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
-  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || "u648874590_hajitours";
-  const port = process.env.DB_PORT || process.env.MYSQL_PORT || "3306";
+  const config = getMySQLConfig();
   const hasMySQLConfig = isMySQLConfigured();
   if (hasMySQLConfig) {
+    if (!isUsingMySQL || !mysqlPool) {
+      await ensureDatabaseConnected();
+    }
     if (isUsingMySQL && mysqlPool) {
-      let tablesCount2 = 99;
+      let tablesCount2 = 100;
       try {
         const [tables] = await mysqlPool.query("SHOW TABLES");
-        tablesCount2 = Array.isArray(tables) ? tables.length : 99;
+        tablesCount2 = Array.isArray(tables) ? tables.length : 100;
       } catch {
-        tablesCount2 = 99;
+        tablesCount2 = 100;
       }
       return {
         connected: true,
         engine: "mysql",
-        database,
-        host: `${host}:${port}`,
+        database: config.database,
+        host: `${config.host}:${config.port}`,
         tablesCount: tablesCount2,
-        message: `Connected to Production MySQL at ${host}:${port}/${database}`,
+        message: `Connected to Production MySQL at ${config.host}:${config.port}/${config.database}`,
         lastError: null,
         isConfiguredForMySQL: true
       };
@@ -602,8 +710,8 @@ async function getDbStatus() {
       return {
         connected: false,
         engine: "mysql",
-        database,
-        host: `${host}:${port}`,
+        database: config.database,
+        host: `${config.host}:${config.port}`,
         tablesCount: 0,
         message: `Production MySQL connection failed: ${lastMySQLConnectionError || "Connection not established"}`,
         lastError: lastMySQLConnectionError || "Connection not established",
@@ -632,11 +740,7 @@ async function getDbStatus() {
   };
 }
 async function testMySQLQuery() {
-  const host = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
-  const user = process.env.DB_USER || process.env.MYSQL_USER || "u648874590_hajitours";
-  const password = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || "";
-  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || "u648874590_hajitours";
-  const port = parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || "3306", 10);
+  const config = getMySQLConfig();
   if (isUsingMySQL && mysqlPool) {
     try {
       const [rows] = await mysqlPool.query("SELECT 1 AS connected");
@@ -649,14 +753,22 @@ async function testMySQLQuery() {
   }
   let conn = null;
   try {
-    conn = await import_promise.default.createConnection({
-      host,
-      user,
-      password,
-      database,
-      port,
-      connectTimeout: 5e3
-    });
+    const connConfig = {
+      user: config.user,
+      password: config.password,
+      database: config.database,
+      connectTimeout: 1e4
+    };
+    if (config.socketPath) {
+      connConfig.socketPath = config.socketPath;
+    } else {
+      connConfig.host = config.host;
+      connConfig.port = config.port;
+    }
+    if (config.ssl) {
+      connConfig.ssl = config.ssl;
+    }
+    conn = await import_promise.default.createConnection(connConfig);
     const [rows] = await conn.query("SELECT 1 AS connected");
     await conn.end();
     if (Array.isArray(rows) && rows.length > 0) {
@@ -674,9 +786,10 @@ async function testMySQLQuery() {
     return false;
   }
 }
-var import_promise, import_fs, import_path, import_sql, mysqlPool, sqliteDb, isUsingMySQL, lastMySQLConnectionError, sqliteFilePath;
+var import_config, import_promise, import_fs, import_path, import_sql, mysqlPool, sqliteDb, isUsingMySQL, lastMySQLConnectionError, initPromise, sqliteFilePath;
 var init_db = __esm({
   "server/db.ts"() {
+    import_config = require("dotenv/config");
     import_promise = __toESM(require("mysql2/promise"));
     import_fs = __toESM(require("fs"));
     import_path = __toESM(require("path"));
@@ -685,12 +798,13 @@ var init_db = __esm({
     sqliteDb = null;
     isUsingMySQL = false;
     lastMySQLConnectionError = null;
+    initPromise = null;
     sqliteFilePath = import_path.default.join(process.cwd(), "data_store.sqlite");
   }
 });
 
 // server.ts
-var import_config = require("dotenv/config");
+var import_config2 = require("dotenv/config");
 var import_express12 = __toESM(require("express"));
 var import_path4 = __toESM(require("path"));
 var import_fs4 = __toESM(require("fs"));
@@ -3888,7 +4002,8 @@ async function startServer() {
     "https://www.hajjioriginaltours.com",
     "http://www.hajjioriginaltours.com",
     "https://admin.hajjioriginaltours.com",
-    "https://api.hajjioriginaltours.com"
+    "https://api.hajjioriginaltours.com",
+    "https://myc.hajjioriginaltours.com"
   ]);
   app.use((req, res, next) => {
     const origin = req.headers.origin;
@@ -3979,8 +4094,9 @@ async function startServer() {
   });
   app.get("/api/health", async (req, res) => {
     const dbStatus = await getDbStatus();
-    res.json({
-      status: "ok",
+    const isConnected = Boolean(dbStatus.connected);
+    res.status(isConnected ? 200 : 503).json({
+      status: isConnected ? "ok" : "degraded",
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       database: dbStatus,
       app: "Hajji Original Tours Admin Management System",
