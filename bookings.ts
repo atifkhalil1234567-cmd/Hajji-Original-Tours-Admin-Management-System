@@ -14,7 +14,7 @@ router.get('/statuses', authenticate, async (req: AuthRequest, res: Response) =>
   }
 });
 
-// 2. Bookings Listing
+// 2. Bookings Listing (Fixed for MySQL CONCAT)
 router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
   try {
     const { search, statusId, paymentStatus, visaStatus, packageId, page = 1, limit = 15 } = req.query;
@@ -53,11 +53,18 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
 
     const bookings = await dbQuery(`
       SELECT b.*,
-             c.customer_code, c.first_name || ' ' || c.last_name as customer_name, c.email as customer_email, c.phone as customer_phone,
-             p.title as package_title, p.origin_city,
-             pd.departure_title, pd.departure_date, pd.return_date,
-             bs.label as status_label, bs.badge_color,
-             a.first_name || ' ' || a.last_name as assigned_agent_name,
+             c.customer_code, 
+             CONCAT(COALESCE(c.first_name, ''), ' ', COALESCE(c.last_name, '')) as customer_name, 
+             c.email as customer_email, 
+             c.phone as customer_phone,
+             p.title as package_title, 
+             p.origin_city,
+             pd.departure_title, 
+             pd.departure_date, 
+             pd.return_date,
+             bs.label as status_label, 
+             bs.badge_color,
+             CONCAT(COALESCE(a.first_name, ''), ' ', COALESCE(a.last_name, '')) as assigned_agent_name,
              (SELECT COUNT(*) FROM booking_travelers bt WHERE bt.booking_id = b.id) as travelers_count
       FROM bookings b
       JOIN customers c ON b.customer_id = c.id
@@ -85,7 +92,7 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response) => {
   }
 });
 
-// 3. Booking Details
+// 3. Booking Details (Fixed for MySQL CONCAT)
 router.get('/:id', authenticate, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const bookingId = req.params.id;
@@ -95,7 +102,7 @@ router.get('/:id', authenticate, async (req: AuthRequest, res: Response): Promis
              p.title as package_title, p.package_type, p.duration_days, p.origin_city,
              pd.departure_title, pd.departure_date, pd.return_date,
              bs.label as status_label, bs.badge_color,
-             a.first_name || ' ' || a.last_name as assigned_agent_name
+             CONCAT(COALESCE(a.first_name, ''), ' ', COALESCE(a.last_name, '')) as assigned_agent_name
       FROM bookings b
       JOIN customers c ON b.customer_id = c.id
       JOIN packages p ON b.package_id = p.id
@@ -126,7 +133,9 @@ router.get('/:id', authenticate, async (req: AuthRequest, res: Response): Promis
       WHERE fb.booking_id = ?
     `, [bookingId]);
     const visaApps = await dbQuery(`
-      SELECT va.*, bt.first_name || ' ' || bt.last_name as traveler_name, bt.passport_number
+      SELECT va.*, 
+             CONCAT(COALESCE(bt.first_name, ''), ' ', COALESCE(bt.last_name, '')) as traveler_name, 
+             bt.passport_number
       FROM visa_applications va
       JOIN booking_travelers bt ON va.traveler_id = bt.id
       WHERE va.booking_id = ?
@@ -155,7 +164,7 @@ router.get('/:id', authenticate, async (req: AuthRequest, res: Response): Promis
   }
 });
 
-// 4. Create Booking (PUBLIC ENDPOINT - Token Not Required)
+// 4. Create Booking (Public & MySQL Dates Fixed)
 router.post('/', async (req: any, res: Response): Promise<void> => {
   try {
     const {
@@ -189,9 +198,7 @@ router.post('/', async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    // Use frontend booking reference or generate new
     const bookingNum = booking_reference || `BK-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
-
     const adminId = req.user?.id || 1;
 
     const result = await dbRun(`
@@ -211,7 +218,6 @@ router.post('/', async (req: any, res: Response): Promise<void> => {
 
     const bookingId = result.insertId;
 
-    // Insert travelers if provided
     if (Array.isArray(travelers) && travelers.length > 0) {
       for (const trav of travelers) {
         if (trav.first_name && trav.last_name) {
@@ -236,7 +242,6 @@ router.post('/', async (req: any, res: Response): Promise<void> => {
             trav.special_requirements || ''
           ]);
 
-          // Create visa application placeholder for each traveler
           const appNum = `VISA-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
           await dbRun(`
             INSERT INTO visa_applications (booking_id, traveler_id, application_number, visa_type, status)
@@ -246,14 +251,13 @@ router.post('/', async (req: any, res: Response): Promise<void> => {
       }
     }
 
-    // Auto-generate invoice
+    // Auto-generate invoice with MySQL CURDATE()
     const invNum = `INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
     await dbRun(`
       INSERT INTO invoices (invoice_number, booking_id, customer_id, issue_date, due_date, subtotal, tax_amount, discount_amount, total_amount, status)
-      VALUES (?, ?, ?, date('now'), date('now', '+14 days'), ?, ?, ?, ?, 'Sent')
+      VALUES (?, ?, ?, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 14 DAY), ?, ?, ?, ?, 'Sent')
     `, [invNum, bookingId, customer_id || 1, finalSubtotal, finalTax, finalDiscount, calculatedTotal]);
 
-    // Increment booked seats if departure is attached
     if (departure_id) {
       await dbRun(`UPDATE package_departures SET booked_seats = booked_seats + ? WHERE id = ?`, [totalTravelers, departure_id]);
       await dbRun(`UPDATE packages SET booked_seats = booked_seats + ? WHERE id = ?`, [totalTravelers, package_id || 1]);
