@@ -155,12 +155,13 @@ router.get('/:id', authenticate, async (req: AuthRequest, res: Response): Promis
   }
 });
 
-// 4. Create Booking
-router.post('/', authenticate, authorize('bookings', 'manage'), async (req: AuthRequest, res: Response): Promise<void> => {
+// 4. Create Booking (PUBLIC ENDPOINT - Token Not Required)
+router.post('/', async (req: any, res: Response): Promise<void> => {
   try {
     const {
-      customer_id,
-      package_id,
+      booking_reference,
+      customer_id = 1,
+      package_id = 1,
       departure_id,
       num_adults = 1,
       num_children = 0,
@@ -188,8 +189,10 @@ router.post('/', authenticate, authorize('bookings', 'manage'), async (req: Auth
       return;
     }
 
-    // Generate unique booking number
-    const bookingNum = `BK-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    // Use frontend booking reference or generate new
+    const bookingNum = booking_reference || `BK-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const adminId = req.user?.id || 1;
 
     const result = await dbRun(`
       INSERT INTO bookings (
@@ -200,7 +203,7 @@ router.post('/', authenticate, authorize('bookings', 'manage'), async (req: Auth
         currency, travel_start_date, travel_end_date, special_requests, internal_notes
       ) VALUES (?, ?, ?, ?, ?, 3, 'Unpaid', 'Documents Pending', 'Unassigned', 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
     `, [
-      bookingNum, customer_id, package_id, departure_id || null, req.user!.id,
+      bookingNum, customer_id || 1, package_id || 1, departure_id || null, adminId,
       num_adults, num_children, num_infants, totalTravelers,
       finalSubtotal, finalDiscount, finalTax, calculatedTotal, calculatedTotal,
       currency, travel_start_date || null, travel_end_date || null, special_requests || '', internal_notes || ''
@@ -248,15 +251,17 @@ router.post('/', authenticate, authorize('bookings', 'manage'), async (req: Auth
     await dbRun(`
       INSERT INTO invoices (invoice_number, booking_id, customer_id, issue_date, due_date, subtotal, tax_amount, discount_amount, total_amount, status)
       VALUES (?, ?, ?, date('now'), date('now', '+14 days'), ?, ?, ?, ?, 'Sent')
-    `, [invNum, bookingId, customer_id, finalSubtotal, finalTax, finalDiscount, calculatedTotal]);
+    `, [invNum, bookingId, customer_id || 1, finalSubtotal, finalTax, finalDiscount, calculatedTotal]);
 
     // Increment booked seats if departure is attached
     if (departure_id) {
       await dbRun(`UPDATE package_departures SET booked_seats = booked_seats + ? WHERE id = ?`, [totalTravelers, departure_id]);
-      await dbRun(`UPDATE packages SET booked_seats = booked_seats + ? WHERE id = ?`, [totalTravelers, package_id]);
+      await dbRun(`UPDATE packages SET booked_seats = booked_seats + ? WHERE id = ?`, [totalTravelers, package_id || 1]);
     }
 
-    await logActivity(req.user!.id, 'bookings', 'create', bookingId, `Created booking ${bookingNum} for total ${currency} ${calculatedTotal}`, req);
+    if (req.user?.id) {
+      await logActivity(req.user.id, 'bookings', 'create', bookingId, `Created booking ${bookingNum} for total ${currency} ${calculatedTotal}`, req);
+    }
 
     res.json({
       success: true,
@@ -298,7 +303,9 @@ router.put('/:id/status', authenticate, authorize('bookings', 'manage'), async (
     if (updates.length > 0) {
       params.push(bookingId);
       await dbRun(`UPDATE bookings SET ${updates.join(', ')} WHERE id = ?`, params);
-      await logActivity(req.user!.id, 'bookings', 'update_status', bookingId, `Updated status parameters for Booking #${bookingId}`, req);
+      if (req.user?.id) {
+        await logActivity(req.user.id, 'bookings', 'update_status', bookingId, `Updated status parameters for Booking #${bookingId}`, req);
+      }
     }
 
     res.json({ success: true, message: 'Status updated' });
